@@ -1094,7 +1094,6 @@ GenericPopUp (Option *option, char *title, DialogClass dlgNr, DialogClass parent
     GtkWidget *textview;
     GtkTextBuffer *textbuffer;
     GdkColor color;
-    GtkWidget *actionarea;
     GtkWidget *sw;
     GtkWidget *list;
     GtkWidget *graph;
@@ -1148,13 +1147,33 @@ if(appData.debugMode) printf("n=%d, h=%d, w=%d\n",n,height,width);
       }
     else
       {
-	dialog = gtk_dialog_new_with_buttons( title,
-					      GTK_WINDOW(shells[parent]),
-					      GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR |
-					      (modal ? GTK_DIALOG_MODAL : 0),
-					      GTK_STOCK_OK, GTK_RESPONSE_ACCEPT,
-					      GTK_STOCK_CANCEL, GTK_RESPONSE_REJECT,
-					      NULL );
+	// creates a dialog with zero, one, or two buttons
+	int min = 0;
+	for (i=0;option[i].type != EndMark;i++) {
+		min |= option[i].min;
+	}
+	if((min & NO_OK)) {
+		dialog = gtk_dialog_new_with_buttons( title,
+						      GTK_WINDOW(shells[parent]),
+						      GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR |
+						      (modal ? GTK_DIALOG_MODAL : 0),
+						      NULL );
+	} else if((min & NO_CANCEL)) {
+		dialog = gtk_dialog_new_with_buttons( title,
+						      GTK_WINDOW(shells[parent]),
+						      GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR |
+						      (modal ? GTK_DIALOG_MODAL : 0),
+						      GTK_STOCK_OK, GTK_RESPONSE_ACCEPT,
+						      NULL );
+	} else {
+		dialog = gtk_dialog_new_with_buttons( title,
+						      GTK_WINDOW(shells[parent]),
+						      GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR |
+						      (modal ? GTK_DIALOG_MODAL : 0),
+						      GTK_STOCK_OK, GTK_RESPONSE_ACCEPT,
+						      GTK_STOCK_CANCEL, GTK_RESPONSE_REJECT,
+						      NULL );
+	}
 	box = gtk_dialog_get_content_area( GTK_DIALOG( dialog ) );
       }
 
@@ -1510,16 +1529,8 @@ if(appData.debugMode) printf("n=%d, h=%d, w=%d\n",n,height,width);
     /* Show dialog */
     gtk_widget_show_all( dialog );
 
-    /* hide OK/cancel buttons */
     if(!topLevel)
       {
-	if((option[i].min & NO_OK)) {
-	  actionarea = gtk_dialog_get_action_area(GTK_DIALOG(dialog));
-	  gtk_widget_hide(actionarea);
-	} else if((option[i].min & NO_CANCEL)) {
-	  button = gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_REJECT);
-	  gtk_widget_hide(button);
-	}
         g_signal_connect (dialog, "response",
                       G_CALLBACK (GenericPopDown),
                       (gpointer)(intptr_t) dlgNr);
