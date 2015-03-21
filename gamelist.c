@@ -1,7 +1,7 @@
 /*
  * gamelist.c -- Functions to manage a gamelist
  *
- * Copyright 1995, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Copyright 1995, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * Enhancements Copyright 2005 Alessandro Scotti
  *
@@ -180,6 +180,7 @@ GameListInitGameInfo (GameInfo *gameInfo)
     gameInfo->whiteRating = -1; /* unknown */
     gameInfo->blackRating = -1; /* unknown */
     gameInfo->variant = VariantNormal;
+    gameInfo->variantName = NULL;
     gameInfo->outOfBook = NULL;
     gameInfo->resultDetails = NULL;
 }
@@ -305,7 +306,7 @@ GameListBuild (FILE *f)
 	    } while (cm == PGNTag || cm == Comment);
 	    if(1) {
 		int btm=0;
-		if(currentListGame->gameInfo.fen) ParseFEN(boards[scratch], &btm, currentListGame->gameInfo.fen);
+		if(currentListGame->gameInfo.fen) ParseFEN(boards[scratch], &btm, currentListGame->gameInfo.fen, FALSE);
 		else CopyBoard(boards[scratch], initialPosition);
 		plyNr = (btm != 0);
 		currentListGame->moves = PackGame(boards[scratch]);
@@ -373,7 +374,7 @@ GameListBuild (FILE *f)
 	}
 	if(gameNumber % 1000 == 0) {
 	    snprintf(buf, MSG_SIZ, _("Reading game file (%d)"), gameNumber);
-	    DisplayTitle(buf);
+	    DisplayTitle(buf); DoEvents();
 	}
     }
     while (cm != (ChessMove) 0);
@@ -436,6 +437,9 @@ ClearGameInfo (GameInfo *gameInfo)
     }
     if (gameInfo->extraTags != NULL) {
 	free(gameInfo->extraTags);
+    }
+    if (gameInfo->variantName != NULL) {
+        free(gameInfo->variantName);
     }
     if (gameInfo->outOfBook != NULL) {
         free(gameInfo->outOfBook);
@@ -513,6 +517,8 @@ GameListLine (int number, GameInfo * gameInfo)
             strncpy( buf, gameInfo->timeControl ? gameInfo->timeControl : "?", MAX_FIELD_LEN );
             break;
         case GLT_VARIANT:
+            strncpy( buf, gameInfo->variantName ? gameInfo->variantName : VariantName(gameInfo->variant), MAX_FIELD_LEN );
+//            strncpy( buf, VariantName(gameInfo->variant), MAX_FIELD_LEN );
             break;
         case GLT_OUT_OF_BOOK:
             strncpy( buf, gameInfo->outOfBook ? gameInfo->outOfBook : "?", MAX_FIELD_LEN );

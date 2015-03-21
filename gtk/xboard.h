@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * The following terms apply to Digital Equipment Corporation's copyright
  * interest in XBoard:
@@ -53,24 +53,14 @@
 
 #define ICS_LOGON    ".icsrc"
 #define MANPAGE      "xboard.6"
-#if ENABLE_NLS
-#define CLOCK_FONT_NAME \
-  "-*-helvetica-bold-r-normal--*-*-*-*-*-*-*-*," \
-  "-misc-fixed-bold-r-normal--*-*-*-*-*-*-*-*," \
-  "-*-*-*-*-*-*-*-*-*-*-*-*-*-*"
-#define COORD_FONT_NAME \
-  "-*-helvetica-bold-r-normal--*-*-*-*-*-*-*-*," \
-  "-misc-fixed-bold-r-normal--*-*-*-*-*-*-*-*," \
-  "-*-*-*-*-*-*-*-*-*-*-*-*-*-*"
-#define DEFAULT_FONT_NAME \
-  "-*-helvetica-medium-r-normal--*-*-*-*-*-*-*-*," \
-  "-misc-fixed-medium-r-normal--*-*-*-*-*-*-*-*," \
-  "-*-*-*-*-*-*-*-*-*-*-*-*-*-*"
-#else
-#define CLOCK_FONT_NAME         "-*-helvetica-bold-r-normal--*-*-*-*-*-*-*-*"
-#define COORD_FONT_NAME         "-*-helvetica-bold-r-normal--*-*-*-*-*-*-*-*"
-#define DEFAULT_FONT_NAME       "-*-helvetica-medium-r-normal--*-*-*-*-*-*-*-*"
-#endif
+#define CLOCK_FONT_NAME         "Sans Bold %d"
+#define COORD_FONT_NAME         "Sans Bold %d"
+#define DEFAULT_FONT_NAME       "Sans Normal %d"
+#define CONSOLE_FONT_NAME       "Monospace Normal %d"
+#define HISTORY_FONT_NAME       "Sans Normal %d"
+#define COMMENT_FONT_NAME       "Sans Normal %d"
+#define TAGS_FONT_NAME          "Sans Normal %d"
+#define GAMELIST_FONT_NAME      "Sans Normal %d"
 #define COLOR_SHOUT             "green"
 #define COLOR_SSHOUT            "green,black,1"
 #define COLOR_CHANNEL1          "cyan"
@@ -107,11 +97,11 @@ typedef struct {
   { "Moderate", 58, 3, 34, 12, 14, 1, 0, 768 }, \
   { "Average",  54, 2, 30, 11, 12, 1, 0, 600 }, \
   { "Middling", 49, 2, 24, 10, 12, 1, 0, 600 }, \
-  { "Mediocre", 45, 2, 20, 10, 12, 1, 0, 600 }, \
-  { "Small",    40, 2, 20, 10, 12, 1, 0, 480 }, \
-  { "Slim",     37, 2, 20, 10, 12, 1, 0, 480 }, \
-  { "Petite",   33, 1, 15, 9,  11, 1, 0, 480 }, \
-  { "Dinky",    29, 1, 15, 9,  11, 1, 0, 480 }, \
+  { "Mediocre", 45, 2, 20, 10, 12, 1, 4, 600 }, \
+  { "Small",    40, 2, 20, 10, 12, 1, 3, 480 }, \
+  { "Slim",     37, 2, 20, 10, 12, 1, 3, 480 }, \
+  { "Petite",   33, 1, 15, 9,  11, 1, 2, 480 }, \
+  { "Dinky",    29, 1, 15, 9,  11, 1, 1, 480 }, \
   { "Teeny",    25, 1, 12, 8,  11, 1, 1, 480 }, \
   { "Tiny",     21, 1, 12, 8,  11, 1, 1, 0 }, \
   {   NULL,      0, 0,  0, 0,   0, 0, 0, 0 } }
@@ -119,7 +109,7 @@ typedef struct {
 #define BORDER_X_OFFSET 3
 #define BORDER_Y_OFFSET 27
 #define FIRST_CHESS_PROGRAM	"fairymax"
-#define SECOND_CHESS_PROGRAM	"fairymax"
+#define SECOND_CHESS_PROGRAM	""
 #define FIRST_DIRECTORY         "."
 #define SECOND_DIRECTORY        "."
 #define SOUND_BELL              ""
@@ -130,6 +120,7 @@ typedef struct {
 #define SETTINGS_FILE           SYSCONFDIR"/xboard.conf"
 #define COLOR_BKGD              "white"
 
+GdkPixbuf *LoadIconFile P((char *name));
 void NewTagsPopup P((char *text, char *msg));
 int AppendText P((Option *opt, char *s));
 void NewCommentPopup P((char *title, char *text, int index));

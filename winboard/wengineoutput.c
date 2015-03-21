@@ -5,7 +5,7 @@
  *
  * Copyright 2005 Alessandro Scotti
  *
- * Enhancements Copyright 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Enhancements Copyright 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * ------------------------------------------------------------------------
  *
@@ -225,7 +225,8 @@ void ResizeWindowControls( int mode )
     InvalidateRect( GetDlgItem(hDlg,IDC_EngineMemo2), NULL, FALSE );
 }
 
-static int currentPV, highTextStart[2], highTextEnd[2];
+static int currentPV;
+int highTextStart[2], highTextEnd[2];
 extern RECT boardRect;
 
 VOID

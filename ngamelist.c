@@ -1,7 +1,7 @@
 /*
  * ngamelist.c -- Game list window, Xt-independent front-end code for XBoard
  *
- * Copyright 1995, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Copyright 1995, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  * ------------------------------------------------------------------------
  *
  * GNU XBoard is free software: you can redistribute it and/or modify
@@ -82,7 +82,7 @@ static void GameListReplace P((int page));
 static void GL_Button P((int n));
 
 static Option gamesOptions[] = {
-{ 200,  LR|TB,     400, NULL, (void*) list,       NULL, NULL, ListBox, "" },
+{ 200,  LR|TB,     400, NULL, (void*) list,       NULL, NULL, ListBox, "", &appData.gameListFont },
 {   0,  0,         100, NULL, (void*) &filterPtr, "", NULL, TextBox, "" },
 {   4,  SAME_ROW,    0, NULL, (void*) &GL_Button, NULL, NULL, Button, N_("find position") },
 {   2,  SAME_ROW,    0, NULL, (void*) &GL_Button, NULL, NULL, Button, N_("narrow") }, // buttons referred to by ID in value (=first) field!
@@ -190,7 +190,7 @@ GameListPrepare (int byPos, int narrow)
 	if(lg->number % 2000 == 0) {
 	    char buf[MSG_SIZ];
 	    snprintf(buf, MSG_SIZ, _("Scanning through games (%d)"), lg->number);
-	    DisplayTitle(buf);
+	    DisplayTitle(buf); DoEvents();
 	}
 	lg->position = pos;
 	lg = (ListGame *) lg->node.succ;
@@ -221,6 +221,13 @@ GameListReplace (int page)
 }
 
 void
+GameListUpdate ()
+{
+    GameListPrepare(False, False);
+    GameListReplace(0);
+}
+
+void
 GameListPopUp (FILE *fp, char *filename)
 {
     if (glc == NULL) {
@@ -242,6 +249,7 @@ GameListPopUp (FILE *fp, char *filename)
     page = 0;
     GameListReplace(0); // [HGM] filter: code put in separate routine, and also called to set title
     MarkMenu("View.GameList", GameListDlg);
+    EnableNamedMenuItem("File.SaveSelected", TRUE);
 }
 
 FILE *
@@ -254,6 +262,7 @@ void
 GameListDestroy ()
 {
     if (glc == NULL) return;
+    EnableNamedMenuItem("File.SaveSelected", FALSE);
     PopDown(GameListDlg);
     if (glc->strings != NULL) {
 	char **st;

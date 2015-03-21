@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * Enhancements Copyright 2005 Alessandro Scotti
  *
@@ -55,14 +55,32 @@
 #ifdef WIN32
 #include <windows.h>
 
-int flock(int f, int code);
-#define LOCK_EX 2
-#define SLASH '\\'
+    int flock(int f, int code);
+#   define LOCK_EX 2
+#   define SLASH '\\'
+
+#   ifdef ARC_64BIT
+#       define EGBB_NAME "egbbdll64.dll"
+#   else
+#       define EGBB_NAME "egbbdll.dll"
+#   endif
 
 #else
 
-#include <sys/file.h>
-#define SLASH '/'
+#   include <sys/file.h>
+#   define SLASH '/'
+
+#   include <dlfcn.h>
+#   ifdef ARC_64BIT
+#       define EGBB_NAME "egbbso64.so"
+#   else
+#       define EGBB_NAME "egbbso.so"
+#   endif
+    // kludge to allow Windows code in back-end by converting it to corresponding Linux code 
+#   define CDECL
+#   define HMODULE void *
+#   define LoadLibrary(x) dlopen(x, RTLD_LAZY)
+#   define GetProcAddress dlsym
 
 #endif
 
@@ -130,6 +148,7 @@ extern int gettimeofday(struct timeval *, struct timezone *);
 #endif
 #include "backendz.h"
 #include "evalgraph.h"
+#include "engineoutput.h"
 #include "gettext.h"
 
 #ifdef ENABLE_NLS
@@ -225,14 +244,13 @@ void DisplayTwoMachinesTitle P(());
 static void ExcludeClick P((int index));
 void ToggleSecond P((void));
 void PauseEngine P((ChessProgramState *cps));
-static int NonStandardBoardSize P((void));
+static int NonStandardBoardSize P((VariantClass v, int w, int h, int s));
 
 #ifdef WIN32
        extern void ConsoleCreate();
 #endif
 
 ChessProgramState *WhitePlayer();
-void InsertIntoMemo P((int which, char *text)); // [HGM] kibitz: in engineo.c
 int VerifyDisplayMode P(());
 
 char *GetInfoFromComment( int, char * ); // [HGM] PV time: returns stripped comment
@@ -269,11 +287,15 @@ char chatPartner[MAX_CHAT][MSG_SIZ]; /* [HGM] chat: list of chatting partners */
 extern int chatCount;
 int chattingPartner;
 char marker[BOARD_RANKS][BOARD_FILES]; /* [HGM] marks for target squares */
+char legal[BOARD_RANKS][BOARD_FILES];  /* [HGM] legal target squares */
 char lastMsg[MSG_SIZ];
+char lastTalker[MSG_SIZ];
 ChessSquare pieceSweep = EmptySquare;
 ChessSquare promoSweep = EmptySquare, defaultPromoChoice;
 int promoDefaultAltered;
 int keepInfo = 0; /* [HGM] to protect PGN tags in auto-step game analysis */
+static int initPing = -1;
+int border;       /* [HGM] width of board rim, needed to size seek graph  */
 
 /* States for ics_getting_history */
 #define H_FALSE 0
@@ -388,12 +410,19 @@ PosFlags (index)
   case VariantShatranj:
   case VariantCourier:
   case VariantMakruk:
+  case VariantASEAN:
   case VariantGrand:
     flags &= ~F_ALL_CASTLE_OK;
+    break;
+  case VariantChu:
+  case VariantChuChess:
+  case VariantLion:
+    flags |= F_NULL_MOVE;
     break;
   default:
     break;
   }
+  if(appData.fischerCastling) flags |= F_FRC_TYPE_CASTLING, flags &= ~F_ALL_CASTLE_OK; // [HGM] fischer
   return flags;
 }
 
@@ -557,6 +586,20 @@ ChessSquare makrukArray[2][BOARD_FILES] = { /* [HGM] (movGen knows about Shatran
         BlackKing, BlackMan, BlackKnight, BlackRook }
 };
 
+ChessSquare aseanArray[2][BOARD_FILES] = { /* [HGM] (movGen knows about Shatranj Q and P) */
+    { WhiteRook, WhiteKnight, WhiteMan, WhiteFerz,
+        WhiteKing, WhiteMan, WhiteKnight, WhiteRook },
+    { BlackRook, BlackKnight, BlackMan, BlackFerz,
+        BlackKing, BlackMan, BlackKnight, BlackRook }
+};
+
+ChessSquare  lionArray[2][BOARD_FILES] = {
+    { WhiteRook, WhiteLion, WhiteBishop, WhiteQueen,
+	WhiteKing, WhiteBishop, WhiteKnight, WhiteRook },
+    { BlackRook, BlackLion, BlackBishop, BlackQueen,
+	BlackKing, BlackBishop, BlackKnight, BlackRook }
+};
+
 
 #if (BOARD_FILES>=10)
 ChessSquare ShogiArray[2][BOARD_FILES] = {
@@ -601,6 +644,13 @@ ChessSquare GrandArray[2][BOARD_FILES] = {
         BlackMarshall, BlackAngel, BlackBishop, BlackKnight, EmptySquare }
 };
 
+ChessSquare ChuChessArray[2][BOARD_FILES] = {
+    { WhiteMan, WhiteKnight, WhiteBishop, WhiteCardinal, WhiteLion,
+        WhiteQueen, WhiteDragon, WhiteBishop, WhiteKnight, WhiteMan },
+    { BlackMan, BlackKnight, BlackBishop, BlackDragon, BlackQueen,
+        BlackLion, BlackCardinal, BlackBishop, BlackKnight, BlackMan }
+};
+
 #ifdef GOTHIC
 ChessSquare GothicArray[2][BOARD_FILES] = {
     { WhiteRook, WhiteKnight, WhiteBishop, WhiteQueen, WhiteMarshall,
@@ -637,8 +687,23 @@ ChessSquare CourierArray[2][BOARD_FILES] = {
     { BlackRook, BlackKnight, BlackAlfil, BlackBishop, BlackMan, BlackKing,
         BlackFerz, BlackWazir, BlackBishop, BlackAlfil, BlackKnight, BlackRook }
 };
+ChessSquare ChuArray[6][BOARD_FILES] = {
+    { WhiteLance, WhiteUnicorn, WhiteMan, WhiteFerz, WhiteWazir, WhiteKing,
+      WhiteAlfil, WhiteWazir, WhiteFerz, WhiteMan, WhiteUnicorn, WhiteLance },
+    { BlackLance, BlackUnicorn, BlackMan, BlackFerz, BlackWazir, BlackAlfil,
+      BlackKing, BlackWazir, BlackFerz, BlackMan, BlackUnicorn, BlackLance },
+    { WhiteCannon, EmptySquare, WhiteBishop, EmptySquare, WhiteNightrider, WhiteMarshall,
+      WhiteAngel, WhiteNightrider, EmptySquare, WhiteBishop, EmptySquare, WhiteCannon },
+    { BlackCannon, EmptySquare, BlackBishop, EmptySquare, BlackNightrider, BlackAngel,
+      BlackMarshall, BlackNightrider, EmptySquare, BlackBishop, EmptySquare, BlackCannon },
+    { WhiteFalcon, WhiteSilver, WhiteRook, WhiteCardinal, WhiteDragon, WhiteLion,
+      WhiteQueen, WhiteDragon, WhiteCardinal, WhiteRook, WhiteSilver, WhiteFalcon },
+    { BlackFalcon, BlackSilver, BlackRook, BlackCardinal, BlackDragon, BlackQueen,
+      BlackLion, BlackDragon, BlackCardinal, BlackRook, BlackSilver, BlackFalcon }
+};
 #else // !(BOARD_FILES>=12)
 #define CourierArray CapablancaArray
+#define ChuArray CapablancaArray
 #endif // !(BOARD_FILES>=12)
 
 
@@ -720,8 +785,7 @@ UnloadEngine (ChessProgramState *cps)
 	    ExitAnalyzeMode();
             DoSleep( appData.delayBeforeQuit );
 	    SendToProgram("quit\n", cps);
-            DoSleep( appData.delayAfterQuit );
-	    DestroyChildProcess(cps->pr, cps->useSigterm);
+	    DestroyChildProcess(cps->pr, 4 + cps->useSigterm);
 	}
 	cps->pr = NoProc;
 	if(appData.debugMode) fprintf(debugFP, "Unload %s\n", cps->which);
@@ -784,11 +848,12 @@ InitEngine (ChessProgramState *cps, int n)
     if(cps->tidy == NULL) cps->tidy = (char*) malloc(MSG_SIZ);
     TidyProgramName(cps->program, cps->host, cps->tidy);
     cps->matchWins = 0;
-    ASSIGN(cps->variants, appData.variant);
+    ASSIGN(cps->variants, appData.noChessProgram ? "" : appData.variant);
     cps->analysisSupport = 2; /* detect */
     cps->analyzing = FALSE;
     cps->initDone = FALSE;
     cps->reload = FALSE;
+    cps->pseudo = appData.pseudo[n];
 
     /* New features added by Tord: */
     cps->useFEN960 = FALSE;
@@ -806,6 +871,7 @@ InitEngine (ChessProgramState *cps, int n)
     /* [HGM] debug */
     cps->debug = FALSE;
 
+    cps->drawDepth = appData.drawDepth[n];
     cps->supportsNPS = UNKNOWN;
     cps->memSize = FALSE;
     cps->maxCores = FALSE;
@@ -817,6 +883,7 @@ InitEngine (ChessProgramState *cps, int n)
     cps->scoreIsAbsolute = appData.scoreIsAbsolute[n]; /* [AS] */
     cps->isUCI = appData.isUCI[n]; /* [AS] */
     cps->hasOwnBookUCI = appData.hasOwnBookUCI[n]; /* [AS] */
+    cps->highlight = 0;
 
     if (appData.protocolVersion[n] > PROTOVER
 	|| appData.protocolVersion[n] < 1)
@@ -888,7 +955,7 @@ extern Boolean isUCI, hasBook, storeVariant, v1, addToList, useNick;
 static char resetOptions[] =
 	"-reuse -firstIsUCI false -firstHasOwnBookUCI true -firstTimeOdds 1 "
 	"-firstInitString \"" INIT_STRING "\" -firstComputerString \"" COMPUTER_STRING "\" "
-	"-firstFeatures \"\" -firstLogo \"\" -firstAccumulateTC 1 "
+	"-firstFeatures \"\" -firstLogo \"\" -firstAccumulateTC 1 -fd \".\" "
 	"-firstOptions \"\" -firstNPS -1 -fn \"\" -firstScoreAbs false";
 
 void
@@ -915,7 +982,7 @@ char *insert, *wbOptions; // point in ChessProgramNames were we should insert ne
 void
 Load (ChessProgramState *cps, int i)
 {
-    char *p, *q, buf[MSG_SIZ], command[MSG_SIZ], buf2[MSG_SIZ];
+    char *p, *q, buf[MSG_SIZ], command[MSG_SIZ], buf2[MSG_SIZ], buf3[MSG_SIZ], jar;
     if(engineLine && engineLine[0]) { // an engine was selected from the combo box
 	snprintf(buf, MSG_SIZ, "-fcp %s", engineLine);
 	SwapEngines(i); // kludge to parse -f* / -first* like it is -s* / -second*
@@ -939,11 +1006,13 @@ Load (ChessProgramState *cps, int i)
 	p[-1] = SLASH;
 	if(SLASH == '/' && p - engineName > 1) *(p -= 2) = '.'; // for XBoard use ./exeName as command after split!
     } else { ASSIGN(appData.directory[i], "."); }
+    jar = (strstr(p, ".jar") == p + strlen(p) - 4);
     if(params[0]) {
 	if(strchr(p, ' ') && !strchr(p, '"')) snprintf(buf2, MSG_SIZ, "\"%s\"", p), p = buf2; // quote if it contains spaces
 	snprintf(command, MSG_SIZ, "%s %s", p, params);
 	p = command;
     }
+    if(jar) { snprintf(buf3, MSG_SIZ, "java -jar %s", p); p = buf3; }
     ASSIGN(appData.chessProgram[i], p);
     appData.isUCI[i] = isUCI;
     appData.protocolVersion[i] = v1 ? 1 : PROTOVER;
@@ -1132,18 +1201,23 @@ InitBackEnd1 ()
 	DisplayFatalError(buf, 0, 2);
 	return;
 
+      case VariantNormal:     /* definitely works! */
+	if(strcmp(appData.variant, "normal") && !appData.noChessProgram) { // [HGM] hope this is an engine-defined variant
+	  safeStrCpy(engineVariant, appData.variant, MSG_SIZ);
+	  return;
+	}
       case VariantXiangqi:    /* [HGM] repetition rules not implemented */
       case VariantFairy:      /* [HGM] TestLegality definitely off! */
       case VariantGothic:     /* [HGM] should work */
       case VariantCapablanca: /* [HGM] should work */
       case VariantCourier:    /* [HGM] initial forced moves not implemented */
       case VariantShogi:      /* [HGM] could still mate with pawn drop */
+      case VariantChu:        /* [HGM] experimental */
       case VariantKnightmate: /* [HGM] should work */
       case VariantCylinder:   /* [HGM] untested */
       case VariantFalcon:     /* [HGM] untested */
       case VariantCrazyhouse: /* holdings not shown, ([HGM] fixed that!)
 			         offboard interposition not understood */
-      case VariantNormal:     /* definitely works! */
       case VariantWildCastle: /* pieces not automatically shuffled */
       case VariantNoCastle:   /* pieces not automatically shuffled */
       case VariantFischeRandom: /* [HGM] works and shuffles pieces */
@@ -1158,6 +1232,7 @@ InitBackEnd1 ()
       case Variant3Check:     /* should work except for win condition */
       case VariantShatranj:   /* should work except for all win conditions */
       case VariantMakruk:     /* should work except for draw countdown */
+      case VariantASEAN :     /* should work except for draw countdown */
       case VariantBerolina:   /* might work if TestLegality is off */
       case VariantCapaRandom: /* should work */
       case VariantJanus:      /* should work */
@@ -1166,6 +1241,8 @@ InitBackEnd1 ()
       case VariantSChess:     /* S-Chess, should work */
       case VariantGrand:      /* should work */
       case VariantSpartan:    /* should work */
+      case VariantLion:       /* should work */
+      case VariantChuChess:   /* should work */
 	break;
       }
     }
@@ -1485,7 +1562,7 @@ MatchEvent (int mode)
 			NextTourneyGame(-1, &dummy);
 			ReserveGame(-1, 0);
 			if(nextGame <= appData.matchGames) {
-			    DisplayNote(_("You restarted an already completed tourney\nOne more cycle will now be added to it\nGames commence in 10 sec"));
+			    DisplayNote(_("You restarted an already completed tourney.\nOne more cycle will now be added to it.\nGames commence in 10 sec."));
 			    matchMode = mode;
 			    ScheduleDelayedEvent(NextMatchGame, 10000);
 			    return;
@@ -1517,6 +1594,23 @@ InitBackEnd3 P((void))
     GameMode initialMode;
     char buf[MSG_SIZ];
     int err, len;
+
+    if(!appData.icsActive && !appData.noChessProgram && !appData.matchMode &&                         // mode involves only first engine
+       !strcmp(appData.variant, "normal") &&                                                          // no explicit variant request
+        appData.NrRanks == -1 && appData.NrFiles == -1 && appData.holdingsSize == -1 &&               // no size overrides requested
+       !SupportedVariant(first.variants, VariantNormal, 8, 8, 0, first.protocolVersion, "") &&        // but 'normal' won't work with engine
+       !SupportedVariant(first.variants, VariantFischeRandom, 8, 8, 0, first.protocolVersion, "") ) { // nor will Chess960
+	char c, *q = first.variants, *p = strchr(q, ',');
+	if(p) *p = NULLCHAR;
+	if(StringToVariant(q) != VariantUnknown) { // the engine can play a recognized variant, however
+	    int w, h, s;
+	    if(sscanf(q, "%dx%d+%d_%c", &w, &h, &s, &c) == 4) // get size overrides the engine needs with it (if any)
+		appData.NrFiles = w, appData.NrRanks = h, appData.holdingsSize = s, q = strchr(q, '_') + 1;
+	    ASSIGN(appData.variant, q); // fake user requested the first variant played by the engine
+	    Reset(TRUE, FALSE);         // and re-initialize
+	}
+	if(p) *p = ',';
+    }
 
     InitChessProgram(&first, startedFromSetupPosition);
 
@@ -1995,10 +2089,12 @@ StripHighlight (char *s)
     return retbuf;
 }
 
+char engineVariant[MSG_SIZ];
 char *variantNames[] = VARIANT_NAMES;
 char *
 VariantName (VariantClass v)
 {
+    if(v == VariantUnknown || *engineVariant) return engineVariant;
     return variantNames[v];
 }
 
@@ -2012,14 +2108,14 @@ StringToVariant (char *e)
     int wnum = -1;
     VariantClass v = VariantNormal;
     int i, found = FALSE;
-    char buf[MSG_SIZ];
+    char buf[MSG_SIZ], c;
     int len;
 
     if (!e) return v;
 
     /* [HGM] skip over optional board-size prefixes */
-    if( sscanf(e, "%dx%d_", &i, &i) == 2 ||
-        sscanf(e, "%dx%d+%d_", &i, &i, &i) == 3 ) {
+    if( sscanf(e, "%dx%d_%c", &i, &i, &c) == 3 ||
+        sscanf(e, "%dx%d+%d_%c", &i, &i, &i, &c) == 4 ) {
         while( *e++ != '_');
     }
 
@@ -2028,7 +2124,8 @@ StringToVariant (char *e)
 	found = TRUE;
     } else
     for (i=0; i<sizeof(variantNames)/sizeof(char*); i++) {
-      if (StrCaseStr(e, variantNames[i])) {
+      if (p = StrCaseStr(e, variantNames[i])) {
+	if(p && i >= VariantShogi && (p != e || isalpha(p[strlen(variantNames[i])]))) continue;
 	v = (VariantClass) i;
 	found = TRUE;
 	break;
@@ -2624,8 +2721,8 @@ DrawSeekGraph ()
 {
     int i;
     if(!seekGraphUp) return FALSE;
-    h = BOARD_HEIGHT * (squareSize + lineGap) + lineGap;
-    w = BOARD_WIDTH  * (squareSize + lineGap) + lineGap;
+    h = BOARD_HEIGHT * (squareSize + lineGap) + lineGap + 2*border;
+    w = BOARD_WIDTH  * (squareSize + lineGap) + lineGap + 2*border;
 
     DrawSeekBackground(0, 0, w, h);
     DrawSeekAxis(hMargin, h-1-vMargin, w-5, h-1-vMargin);
@@ -2744,7 +2841,7 @@ read_from_ics (InputSourceRef isr, VOIDSTAR closure, char *data, int count, int 
     int backup;    /* [DM] For zippy color lines */
     char *p;
     char talker[MSG_SIZ]; // [HGM] chat
-    int channel;
+    int channel, collective=0;
 
     connectionAlive = TRUE; // [HGM] alive: I think, therefore I am...
 
@@ -2986,8 +3083,18 @@ read_from_ics (InputSourceRef isr, VOIDSTAR closure, char *data, int count, int 
 			char mess[MSG_SIZ];
 			snprintf(mess, MSG_SIZ, "%s%s", talker, parse);
 			OutputChatMessage(chattingPartner, mess);
+			if(collective == 1) { // broadcasted talk also goes to private chatbox of talker
+			    int p;
+			    talker[strlen(talker+1)-1] = NULLCHAR; // strip closing delimiter
+			    for(p=0; p<MAX_CHAT; p++) if(!StrCaseCmp(talker+1, chatPartner[p])) {
+				snprintf(mess, MSG_SIZ, "%s: %s", chatPartner[chattingPartner], parse);
+				OutputChatMessage(p, mess);
+				break;
+			    }
+			}
 			chattingPartner = -1;
-			next_out = i+1; // [HGM] suppress printing in ICS window
+			if(collective != 3) next_out = i+1; // [HGM] suppress printing in ICS window
+			collective = 0;
 		    } else
 		    if(!suppressKibitz) // [HGM] kibitz
 			AppendComment(forwardMostMove, StripHighlight(parse), TRUE);
@@ -3014,8 +3121,10 @@ read_from_ics (InputSourceRef isr, VOIDSTAR closure, char *data, int count, int 
 			} else {
 			    char tmp[MSG_SIZ];
 			    if(gameMode == IcsObserving) // restore original ICS messages
+			      /* TRANSLATORS: to 'kibitz' is to send a message to all players and the game observers */
 			      snprintf(tmp, MSG_SIZ, "%s kibitzes: %s", star_match[0], parse);
 			    else
+			    /* TRANSLATORS: to 'kibitz' is to send a message to all players and the game observers */
 			    snprintf(tmp, MSG_SIZ, _("your opponent kibitzes: %s"), parse);
 			    SendToPlayer(tmp, strlen(tmp));
 			}
@@ -3201,18 +3310,20 @@ read_from_ics (InputSourceRef isr, VOIDSTAR closure, char *data, int count, int 
 					   looking_at(buf, &i, "*(*)(*)(*)(*):") && sscanf(star_match[4], "%d", &channel) == 1 )) {
 		int p;
 		sscanf(star_match[0], "%[^(]", talker+1); // strip (C) or (U) off ICS handle
-		chattingPartner = -1;
+		chattingPartner = -1; collective = 0;
 
 		if(channel >= 0) // channel broadcast; look if there is a chatbox for this channel
 		for(p=0; p<MAX_CHAT; p++) {
+		    collective = 1;
 		    if(chatPartner[p][0] >= '0' && chatPartner[p][0] <= '9' && channel == atoi(chatPartner[p])) {
 		    talker[0] = '['; strcat(talker, "] ");
-		    Colorize(channel == 1 ? ColorChannel1 : ColorChannel, FALSE);
+		    Colorize((channel == 1 ? ColorChannel1 : ColorChannel), FALSE);
 		    chattingPartner = p; break;
 		    }
 		} else
 		if(buf[i-3] == 'e') // kibitz; look if there is a KIBITZ chatbox
 		for(p=0; p<MAX_CHAT; p++) {
+		    collective = 1;
 		    if(!strcmp("kibitzes", chatPartner[p])) {
 			talker[0] = '['; strcat(talker, "] ");
 			chattingPartner = p; break;
@@ -3220,6 +3331,7 @@ read_from_ics (InputSourceRef isr, VOIDSTAR closure, char *data, int count, int 
 		} else
 		if(buf[i-3] == 'r') // whisper; look if there is a WHISPER chatbox
 		for(p=0; p<MAX_CHAT; p++) {
+		    collective = 1;
 		    if(!strcmp("whispers", chatPartner[p])) {
 			talker[0] = '['; strcat(talker, "] ");
 			chattingPartner = p; break;
@@ -3228,6 +3340,7 @@ read_from_ics (InputSourceRef isr, VOIDSTAR closure, char *data, int count, int 
 		if(buf[i-3] == 't' || buf[oldi+2] == '>') {// shout, c-shout or it; look if there is a 'shouts' chatbox
 		  if(buf[i-8] == '-' && buf[i-3] == 't')
 		  for(p=0; p<MAX_CHAT; p++) { // c-shout; check if dedicatesd c-shout box exists
+		    collective = 1;
 		    if(!strcmp("c-shouts", chatPartner[p])) {
 			talker[0] = '('; strcat(talker, ") "); Colorize(ColorSShout, FALSE);
 			chattingPartner = p; break;
@@ -3235,6 +3348,7 @@ read_from_ics (InputSourceRef isr, VOIDSTAR closure, char *data, int count, int 
 		  }
 		  if(chattingPartner < 0)
 		  for(p=0; p<MAX_CHAT; p++) {
+		    collective = 1;
 		    if(!strcmp("shouts", chatPartner[p])) {
 			if(buf[oldi+2] == '>') { talker[0] = '<'; strcat(talker, "> "); Colorize(ColorShout, FALSE); }
 			else if(buf[i-8] == '-') { talker[0] = '('; strcat(talker, ") "); Colorize(ColorSShout, FALSE); }
@@ -3245,18 +3359,23 @@ read_from_ics (InputSourceRef isr, VOIDSTAR closure, char *data, int count, int 
 		}
 		if(chattingPartner<0) // if not, look if there is a chatbox for this indivdual
 		for(p=0; p<MAX_CHAT; p++) if(!StrCaseCmp(talker+1, chatPartner[p])) {
-		    talker[0] = 0; Colorize(ColorTell, FALSE);
+		    talker[0] = 0;
+		    Colorize(ColorTell, FALSE);
+		    if(collective) safeStrCpy(talker, "broadcasts: ", MSG_SIZ);
+		    collective |= 2;
 		    chattingPartner = p; break;
 		}
-		if(chattingPartner<0) i = oldi; else {
+		if(chattingPartner<0) i = oldi, safeStrCpy(lastTalker, talker+1, MSG_SIZ); else {
 		    Colorize(curColor, TRUE); // undo the bogus colorations we just made to trigger the souds
-		    if(oldi > 0 && buf[oldi-1] == '\n') oldi--;
-		    if (oldi > next_out) SendToPlayer(&buf[next_out], oldi - next_out);
 		    started = STARTED_COMMENT;
 		    parse_pos = 0; parse[0] = NULLCHAR;
 		    savingComment = 3 + chattingPartner; // counts as TRUE
-		    suppressKibitz = TRUE;
-		    continue;
+		    if(collective == 3) i = oldi; else {
+			suppressKibitz = TRUE;
+			if(oldi > 0 && buf[oldi-1] == '\n') oldi--;
+			if (oldi > next_out) SendToPlayer(&buf[next_out], oldi - next_out);
+			continue;
+		    }
 		}
 	    } // [HGM] chat: end of patch
 
@@ -3340,7 +3459,7 @@ read_from_ics (InputSourceRef isr, VOIDSTAR closure, char *data, int count, int 
 		      parse[parse_pos] = NULLCHAR;
 		      started = STARTED_COMMENT;
 		      savingComment = TRUE;
-		    } else {
+		    } else if(collective != 3) {
 		      started = STARTED_CHATTER;
 		      savingComment = FALSE;
 		    }
@@ -4745,7 +4864,7 @@ ParseBoard12 (char *string)
 	      default:
 		break;
 	      case MT_CHECK:
-                if(gameInfo.variant != VariantShogi)
+                if(!IS_SHOGI(gameInfo.variant))
                     strcat(parseList[moveNum - 1], "+");
 		break;
 	      case MT_CHECKMATE:
@@ -4975,6 +5094,11 @@ SendMoveToProgram (int moveNum, ChessProgramState *cps)
     char buf[MSG_SIZ];
 
     if(moveList[moveNum][1] == '@' && moveList[moveNum][0] == '@') {
+	if(gameInfo.variant == VariantLion || gameInfo.variant == VariantChuChess || gameInfo.variant == VariantChu) {
+	    sprintf(buf, "%s@@@@\n", cps->useUsermove ? "usermove " : "");
+	    SendToProgram(buf, cps);
+	    return;
+	}
 	// null move in variant where engine does not understand it (for analysis purposes)
 	SendBoard(cps, moveNum + 1); // send position after move in stead.
 	return;
@@ -5002,8 +5126,7 @@ SendMoveToProgram (int moveNum, ChessProgramState *cps)
       /* Added by Tord: Send castle moves in "O-O" in FRC games if required by
        * the engine. It would be nice to have a better way to identify castle
        * moves here. */
-      if((gameInfo.variant == VariantFischeRandom || gameInfo.variant == VariantCapaRandom)
-									 && cps->useOOCastle) {
+      if(appData.fischerCastling && cps->useOOCastle) {
         int fromX = moveList[moveNum][0] - AAA;
         int fromY = moveList[moveNum][1] - ONE;
         int toX = moveList[moveNum][2] - AAA;
@@ -5016,6 +5139,13 @@ SendMoveToProgram (int moveNum, ChessProgramState *cps)
 	  else SendToProgram("O-O-O\n", cps);
 	}
 	else SendToProgram(moveList[moveNum], cps);
+      } else
+      if(moveList[moveNum][4] == ';') { // [HGM] lion: move is double-step over intermediate square
+	  snprintf(buf, MSG_SIZ, "%c%d%c%d,%c%d%c%d\n", moveList[moveNum][0], moveList[moveNum][1] - '0', // convert to two moves
+					       moveList[moveNum][5], moveList[moveNum][6] - '0',
+					       moveList[moveNum][5], moveList[moveNum][6] - '0',
+					       moveList[moveNum][2], moveList[moveNum][3] - '0');
+	  SendToProgram(buf, cps);
       } else
       if(BOARD_HEIGHT > 10) { // [HGM] big: convert ranks to double-digit where needed
 	if(moveList[moveNum][1] == '@' && (BOARD_HEIGHT < 16 || moveList[moveNum][0] <= 'Z')) { // drop move
@@ -5090,7 +5220,8 @@ SendMoveToICS (ChessMove moveType, int fromX, int fromY, int toX, int toY, char 
         break;
       case WhitePromotion:
       case BlackPromotion:
-        if(gameInfo.variant == VariantShatranj || gameInfo.variant == VariantCourier || gameInfo.variant == VariantMakruk)
+        if(gameInfo.variant == VariantShatranj || gameInfo.variant == VariantCourier ||
+           gameInfo.variant == VariantMakruk || gameInfo.variant == VariantASEAN)
 	  snprintf(user_move, MSG_SIZ, "%c%c%c%c=%c\n",
                 AAA + fromX, ONE + fromY, AAA + toX, ONE + toY,
 		PieceToChar(WhiteFerz));
@@ -5154,7 +5285,7 @@ UploadGameEvent ()
 	SendToICS(ics_prefix);
 	SendToICS(buf);
 	if(startedFromSetupPosition || backwardMostMove != 0) {
-	  fen = PositionToFEN(backwardMostMove, NULL);
+	  fen = PositionToFEN(backwardMostMove, NULL, 1);
 	  if(ics_type == ICS_ICC) { // on ICC we can simply send a complete FEN to set everything
 	    snprintf(buf, MSG_SIZ,"loadfen %s\n", fen);
 	    SendToICS(buf);
@@ -5196,6 +5327,9 @@ UploadGameEvent ()
     SendToICS(ics_type == ICS_ICC ? "tag result Game in progress\n" : "commit\n");
 }
 
+int killX = -1, killY = -1; // [HGM] lion: used for passing e.p. capture square to MakeMove
+int legNr = 1;
+
 void
 CoordsToComputerAlgebraic (int rf, int ff, int rt, int ft, char promoChar, char move[7])
 {
@@ -5207,6 +5341,7 @@ CoordsToComputerAlgebraic (int rf, int ff, int rt, int ft, char promoChar, char 
 	if (promoChar == 'x' || promoChar == NULLCHAR) {
 	  sprintf(move, "%c%c%c%c\n",
                     AAA + ff, ONE + rf, AAA + ft, ONE + rt);
+	  if(killX >= 0 && killY >= 0) sprintf(move+4, ";%c%c\n", AAA + killX, ONE + killY);
 	} else {
 	    sprintf(move, "%c%c%c%c%c\n",
                     AAA + ff, ONE + rf, AAA + ft, ONE + rt, promoChar);
@@ -5227,27 +5362,43 @@ ProcessICSInitScript (FILE *f)
 }
 
 
-static int lastX, lastY, selectFlag, dragging;
+static int lastX, lastY, lastLeftX, lastLeftY, selectFlag;
+int dragging;
+static ClickType lastClickType;
+
+int
+Partner (ChessSquare *p)
+{ // change piece into promotion partner if one shogi-promotes to the other
+  int stride = gameInfo.variant == VariantChu ? 22 : 11;
+  ChessSquare partner;
+  partner = (*p/stride & 1 ? *p - stride : *p + stride);
+  if(PieceToChar(*p) != '+' && PieceToChar(partner) != '+') return 0;
+  *p = partner;
+  return 1;
+}
 
 void
 Sweep (int step)
 {
     ChessSquare king = WhiteKing, pawn = WhitePawn, last = promoSweep;
+    static int toggleFlag;
     if(gameInfo.variant == VariantKnightmate) king = WhiteUnicorn;
     if(gameInfo.variant == VariantSuicide || gameInfo.variant == VariantGiveaway) king = EmptySquare;
     if(promoSweep >= BlackPawn) king = WHITE_TO_BLACK king, pawn = WHITE_TO_BLACK pawn;
     if(gameInfo.variant == VariantSpartan && pawn == BlackPawn) pawn = BlackLance, king = EmptySquare;
-    if(fromY != BOARD_HEIGHT-2 && fromY != 1) pawn = EmptySquare;
+    if(fromY != BOARD_HEIGHT-2 && fromY != 1 && gameInfo.variant != VariantChuChess) pawn = EmptySquare;
+    if(!step) toggleFlag = Partner(&last); // piece has shogi-promotion
     do {
-	promoSweep -= step;
+	if(step && !(toggleFlag && Partner(&promoSweep))) promoSweep -= step;
 	if(promoSweep == EmptySquare) promoSweep = BlackPawn; // wrap
 	else if((int)promoSweep == -1) promoSweep = WhiteKing;
 	else if(promoSweep == BlackPawn && step < 0) promoSweep = WhitePawn;
 	else if(promoSweep == WhiteKing && step > 0) promoSweep = BlackKing;
 	if(!step) step = -1;
     } while(PieceToChar(promoSweep) == '.' || PieceToChar(promoSweep) == '~' || promoSweep == pawn ||
-	    appData.testLegality && (promoSweep == king ||
-	    gameInfo.variant == VariantShogi && promoSweep != PROMOTED last && last != PROMOTED promoSweep && last != promoSweep));
+	    !toggleFlag && PieceToChar(promoSweep) == '+' || // skip promoted versions of other
+	    appData.testLegality && (promoSweep == king || gameInfo.variant != VariantChuChess &&
+            (promoSweep == WhiteLion || promoSweep == BlackLion)));
     if(toX >= 0) {
 	int victim = boards[currentMove][toY][toX];
 	boards[currentMove][toY][toX] = promoSweep;
@@ -5351,6 +5502,7 @@ ParseOneMove (char *move, int moveNum, ChessMove *moveType, int *fromX, int *fro
       case WhiteNonPromotion:
       case BlackNonPromotion:
       case NormalMove:
+      case FirstLeg:
       case WhiteCapturesEnPassant:
       case BlackCapturesEnPassant:
       case WhiteKingSideCastle:
@@ -5384,7 +5536,8 @@ ParseOneMove (char *move, int moveNum, ChessMove *moveType, int *fromX, int *fro
 	if (appData.testLegality) {
 	  return (*moveType != IllegalMove);
 	} else {
-	  return !(*fromX == *toX && *fromY == *toY) && boards[moveNum][*fromY][*fromX] != EmptySquare &&
+	  return !(*fromX == *toX && *fromY == *toY && killX < 0) && boards[moveNum][*fromY][*fromX] != EmptySquare &&
+			 // [HGM] lion: if this is a double move we are less critical
 			WhiteOnMove(moveNum) == (boards[moveNum][*fromY][*fromX] < BlackPawn);
 	}
 
@@ -5527,10 +5680,13 @@ LoadMultiPV (int x, int y, char *buf, int index, int *start, int *end, int pane)
 	} else if(strstr(buf+lineStart, "exclude:") == buf+lineStart) { // exclude moves clicked
 		ExcludeClick(origIndex - lineStart);
 		return FALSE;
+	} else if(!strncmp(buf+lineStart, "dep\t", 4)) {                // column headers clicked
+		Collapse(origIndex - lineStart);
+		return FALSE;
 	}
 	ParsePV(buf+startPV, FALSE, gameMode != AnalyzeMode);
 	*start = startPV; *end = index-1;
-	extendGame = (gameMode == AnalyzeMode && appData.autoExtend);
+	extendGame = (gameMode == AnalyzeMode && appData.autoExtend && origIndex - startPV < 5);
 	return TRUE;
 }
 
@@ -5842,13 +5998,13 @@ void
 InitPosition (int redraw)
 {
     ChessSquare (* pieces)[BOARD_FILES];
-    int i, j, pawnRow, overrule,
+    int i, j, pawnRow=1, pieceRows=1, overrule,
     oldx = gameInfo.boardWidth,
     oldy = gameInfo.boardHeight,
     oldh = gameInfo.holdingsWidth;
     static int oldv;
 
-    if(appData.icsActive) shuffleOpenings = FALSE; // [HGM] shuffle: in ICS mode, only shuffle on ICS request
+    if(appData.icsActive) shuffleOpenings = appData.fischerCastling = FALSE; // [HGM] shuffle: in ICS mode, only shuffle on ICS request
 
     /* [AS] Initialize pv info list [HGM] and game status */
     {
@@ -5877,9 +6033,10 @@ InitPosition (int redraw)
     gameInfo.boardHeight   = 8;
     gameInfo.holdingsSize  = 0;
     nrCastlingRights = -1; /* [HGM] Kludge to indicate default should be used */
-    for(i=0; i<BOARD_FILES-2; i++)
+    for(i=0; i<BOARD_FILES-6; i++)
       initialPosition[CASTLING][i] = initialRights[i] = NoRights; /* but no rights yet */
     initialPosition[EP_STATUS] = EP_NONE;
+    initialPosition[TOUCHED_W] = initialPosition[TOUCHED_B] = 0;
     SetCharTable(pieceToChar, "PNBRQ...........Kpnbrq...........k");
     if(startVariant == gameInfo.variant) // [HGM] nicks: enable nicknames in original variant
          SetCharTable(pieceNickName, appData.pieceNickNames);
@@ -5889,6 +6046,7 @@ InitPosition (int redraw)
     switch (gameInfo.variant) {
     case VariantFischeRandom:
       shuffleOpenings = TRUE;
+      appData.fischerCastling = TRUE;
     default:
       break;
     case VariantShatranj:
@@ -5899,8 +6057,12 @@ InitPosition (int redraw)
     case VariantMakruk:
       pieces = makrukArray;
       nrCastlingRights = 0;
-      startedFromSetupPosition = TRUE;
       SetCharTable(pieceToChar, "PN.R.M....SKpn.r.m....sk");
+      break;
+    case VariantASEAN:
+      pieces = aseanArray;
+      nrCastlingRights = 0;
+      SetCharTable(pieceToChar, "PN.R.Q....BKpn.r.q....bk");
       break;
     case VariantTwoKings:
       pieces = twoKingsArray;
@@ -5915,6 +6077,7 @@ InitPosition (int redraw)
       break;
     case VariantCapaRandom:
       shuffleOpenings = TRUE;
+      appData.fischerCastling = TRUE;
     case VariantCapablanca:
       pieces = CapablancaArray;
       gameInfo.boardWidth = 10;
@@ -5945,7 +6108,7 @@ InitPosition (int redraw)
     case VariantFalcon:
       pieces = FalconArray;
       gameInfo.boardWidth = 10;
-      SetCharTable(pieceToChar, "PNBRQ.............FKpnbrq.............fk");
+      SetCharTable(pieceToChar, "PNBRQ............FKpnbrq............fk");
       break;
     case VariantXiangqi:
       pieces = XiangqiArray;
@@ -5962,6 +6125,14 @@ InitPosition (int redraw)
       nrCastlingRights = 0;
       SetCharTable(pieceToChar, "PNBRLS...G.++++++Kpnbrls...g.++++++k");
       break;
+    case VariantChu:
+      pieces = ChuArray; pieceRows = 3;
+      gameInfo.boardWidth  = 12;
+      gameInfo.boardHeight = 12;
+      nrCastlingRights = 0;
+      SetCharTable(pieceToChar, "P.BRQSEXOGCATHD.VMLIFN+.++.++++++++++.+++++K"
+                                "p.brqsexogcathd.vmlifn+.++.++++++++++.+++++k");
+      break;
     case VariantCourier:
       pieces = CourierArray;
       gameInfo.boardWidth  = 12;
@@ -5975,6 +6146,16 @@ InitPosition (int redraw)
     case VariantSpartan:
       pieces = SpartanArray;
       SetCharTable(pieceToChar, "PNBRQ................K......lwg.....c...h..k");
+      break;
+    case VariantLion:
+      pieces = lionArray;
+      SetCharTable(pieceToChar, "PNBRQ................LKpnbrq................lk");
+      break;
+    case VariantChuChess:
+      pieces = ChuChessArray;
+      gameInfo.boardWidth = 10;
+      gameInfo.boardHeight = 10;
+      SetCharTable(pieceToChar, "PNBRQ.....M.+++......LKpnbrq.....m.+++......lk");
       break;
     case VariantFairy:
       pieces = fairyArray;
@@ -6030,7 +6211,9 @@ InitPosition (int redraw)
 
     pawnRow = gameInfo.boardHeight - 7; /* seems to work in all common variants */
     if(pawnRow < 1) pawnRow = 1;
-    if(gameInfo.variant == VariantMakruk || gameInfo.variant == VariantGrand) pawnRow = 2;
+    if(gameInfo.variant == VariantMakruk || gameInfo.variant == VariantASEAN ||
+       gameInfo.variant == VariantGrand || gameInfo.variant == VariantChuChess) pawnRow = 2;
+    if(gameInfo.variant == VariantChu) pawnRow = 3;
 
     /* User pieceToChar list overrules defaults */
     if(appData.pieceToCharTable != NULL)
@@ -6044,7 +6227,7 @@ InitPosition (int redraw)
             initialPosition[i][j] = s;
 
         if(j < BOARD_LEFT || j >= BOARD_RGHT || overrule) continue;
-        initialPosition[gameInfo.variant == VariantGrand][j] = pieces[0][j-gameInfo.holdingsWidth];
+        initialPosition[gameInfo.variant == VariantGrand || gameInfo.variant == VariantChuChess][j] = pieces[0][j-gameInfo.holdingsWidth];
         initialPosition[pawnRow][j] = WhitePawn;
         initialPosition[BOARD_HEIGHT-pawnRow-1][j] = gameInfo.variant == VariantSpartan ? BlackLance : BlackPawn;
         if(gameInfo.variant == VariantXiangqi) {
@@ -6057,14 +6240,24 @@ InitPosition (int redraw)
                 }
             }
         }
-        if(gameInfo.variant == VariantGrand) {
+        if(gameInfo.variant == VariantChu) {
+             if(j == (BOARD_WIDTH-2)/3 || j == BOARD_WIDTH - (BOARD_WIDTH+1)/3)
+               initialPosition[pawnRow+1][j] = WhiteCobra,
+               initialPosition[BOARD_HEIGHT-pawnRow-2][j] = BlackCobra;
+             for(i=1; i<pieceRows; i++) {
+               initialPosition[i][j] = pieces[2*i][j-gameInfo.holdingsWidth];
+               initialPosition[BOARD_HEIGHT-1-i][j] =  pieces[2*i+1][j-gameInfo.holdingsWidth];
+             }
+        }
+        if(gameInfo.variant == VariantGrand || gameInfo.variant == VariantChuChess) {
             if(j==BOARD_LEFT || j>=BOARD_RGHT-1) {
                initialPosition[0][j] = WhiteRook;
                initialPosition[BOARD_HEIGHT-1][j] = BlackRook;
             }
         }
-        initialPosition[BOARD_HEIGHT-1-(gameInfo.variant == VariantGrand)][j] =  pieces[1][j-gameInfo.holdingsWidth];
+        initialPosition[BOARD_HEIGHT-1-(gameInfo.variant == VariantGrand || gameInfo.variant == VariantChuChess)][j] =  pieces[1][j-gameInfo.holdingsWidth];
     }
+    if(gameInfo.variant == VariantChuChess) initialPosition[0][BOARD_WIDTH/2] = WhiteKing, initialPosition[BOARD_HEIGHT-1][BOARD_WIDTH/2-1] = BlackKing;
     if( (gameInfo.variant == VariantShogi) && !overrule ) {
 
             j=BOARD_LEFT+1;
@@ -6139,7 +6332,7 @@ SendBoard (ChessProgramState *cps, int moveNum)
     char message[MSG_SIZ];
 
     if (cps->useSetboard) {
-      char* fen = PositionToFEN(moveNum, cps->fenOverride);
+      char* fen = PositionToFEN(moveNum, cps->fenOverride, 1);
       snprintf(message, MSG_SIZ,"setboard %s\n", fen);
       SendToProgram(message, cps);
       free(fen);
@@ -6322,7 +6515,8 @@ ChessSquare
 DefaultPromoChoice (int white)
 {
     ChessSquare result;
-    if(gameInfo.variant == VariantShatranj || gameInfo.variant == VariantCourier || gameInfo.variant == VariantMakruk)
+    if(gameInfo.variant == VariantShatranj || gameInfo.variant == VariantCourier ||
+       gameInfo.variant == VariantMakruk || gameInfo.variant == VariantASEAN)
 	result = WhiteFerz; // no choice
     else if(gameInfo.variant == VariantSuicide || gameInfo.variant == VariantGiveaway)
 	result= WhiteKing; // in Suicide Q is the last thing we want
@@ -6341,7 +6535,7 @@ HasPromotionChoice (int fromX, int fromY, int toX, int toY, char *promoChoice, i
     /* [HGM] rewritten IsPromotion to only flag promotions that offer a choice */
     /* [HGM] add Shogi promotions */
     int promotionZoneSize=1, highestPromotingPiece = (int)WhitePawn;
-    ChessSquare piece;
+    ChessSquare piece, partner;
     ChessMove moveType;
     Boolean premove;
 
@@ -6353,15 +6547,19 @@ HasPromotionChoice (int fromX, int fromY, int toX, int toY, char *promoChoice, i
 	return FALSE;
 
     piece = boards[currentMove][fromY][fromX];
-    if(gameInfo.variant == VariantShogi) {
+    if(gameInfo.variant == VariantChu) {
+        int p = piece >= BlackPawn ? BLACK_TO_WHITE piece : piece;
         promotionZoneSize = BOARD_HEIGHT/3;
-        highestPromotingPiece = (int)WhiteFerz;
-    } else if(gameInfo.variant == VariantMakruk || gameInfo.variant == VariantGrand) {
+        highestPromotingPiece = (p >= WhiteLion || PieceToChar(piece + 22) == '.') ? WhitePawn : WhiteLion;
+    } else if(gameInfo.variant == VariantShogi || gameInfo.variant == VariantChuChess) {
+        promotionZoneSize = BOARD_HEIGHT/3;
+        highestPromotingPiece = (int)WhiteAlfil;
+    } else if(gameInfo.variant == VariantMakruk || gameInfo.variant == VariantGrand || gameInfo.variant == VariantChuChess) {
         promotionZoneSize = 3;
     }
 
-    // Treat Lance as Pawn when it is not representing Amazon
-    if(gameInfo.variant != VariantSuper) {
+    // Treat Lance as Pawn when it is not representing Amazon or Lance
+    if(gameInfo.variant != VariantSuper && gameInfo.variant != VariantChu) {
         if(piece == WhiteLance) piece = WhitePawn; else
         if(piece == BlackLance) piece = BlackPawn;
     }
@@ -6370,10 +6568,13 @@ HasPromotionChoice (int fromX, int fromY, int toX, int toY, char *promoChoice, i
     if((int)piece >= BlackPawn) {
         if(toY >= promotionZoneSize && fromY >= promotionZoneSize)
              return FALSE;
+        if(fromY < promotionZoneSize && gameInfo.variant == VariantChuChess) return FALSE;
         highestPromotingPiece = WHITE_TO_BLACK highestPromotingPiece;
     } else {
         if(  toY < BOARD_HEIGHT - promotionZoneSize &&
            fromY < BOARD_HEIGHT - promotionZoneSize) return FALSE;
+        if(fromY >= BOARD_HEIGHT - promotionZoneSize && gameInfo.variant == VariantChuChess)
+             return FALSE;
     }
 
     if( (int)piece > highestPromotingPiece ) return FALSE; // non-promoting piece
@@ -6407,8 +6608,13 @@ HasPromotionChoice (int fromX, int fromY, int toX, int toY, char *promoChoice, i
     }
 
     // we either have a choice what to promote to, or (in Shogi) whether to promote
-    if(gameInfo.variant == VariantShatranj || gameInfo.variant == VariantCourier || gameInfo.variant == VariantMakruk) {
-	*promoChoice = PieceToChar(BlackFerz);  // no choice
+    if(gameInfo.variant == VariantShatranj || gameInfo.variant == VariantCourier ||
+       gameInfo.variant == VariantMakruk || gameInfo.variant == VariantASEAN) {
+	ChessSquare p=BlackFerz;  // no choice
+	while(p < EmptySquare) {  //but make sure we use piece that exists
+	    *promoChoice = PieceToChar(p++);
+	    if(*promoChoice != '.') break;
+	}
 	return FALSE;
     }
     // no sense asking what we must promote to if it is going to explode...
@@ -6418,7 +6624,9 @@ HasPromotionChoice (int fromX, int fromY, int toX, int toY, char *promoChoice, i
     }
     // give caller the default choice even if we will not make it
     *promoChoice = ToLower(PieceToChar(defaultPromoChoice));
-    if(gameInfo.variant == VariantShogi) *promoChoice = (defaultPromoChoice == piece ? '=' : '+');
+    partner = piece; // pieces can promote if the pieceToCharTable says so
+    if(IS_SHOGI(gameInfo.variant)) *promoChoice = (defaultPromoChoice == piece && sweepSelect ? '=' : '+'); // obsolete?
+    else if(Partner(&partner))     *promoChoice = (defaultPromoChoice == piece && sweepSelect ? NULLCHAR : '+');
     if(        sweepSelect && gameInfo.variant != VariantGreat
 			   && gameInfo.variant != VariantGrand
 			   && gameInfo.variant != VariantSuper) return FALSE;
@@ -6429,7 +6637,8 @@ HasPromotionChoice (int fromX, int fromY, int toX, int toY, char *promoChoice, i
 	      gameMode == IcsPlayingBlack &&  WhiteOnMove(currentMove);
     if(appData.testLegality && !premove) {
 	moveType = LegalityTest(boards[currentMove], PosFlags(currentMove),
-			fromY, fromX, toY, toX, gameInfo.variant == VariantShogi ? '+' : NULLCHAR);
+			fromY, fromX, toY, toX, IS_SHOGI(gameInfo.variant) || gameInfo.variant == VariantChuChess ? '+' : NULLCHAR);
+        if(moveType == IllegalMove) *promoChoice = NULLCHAR; // could be the fact we promoted was illegal
 	if(moveType != WhitePromotion && moveType  != BlackPromotion)
 	    return FALSE;
     }
@@ -6620,6 +6829,7 @@ int lastLoadGameUseList = FALSE;
 char lastLoadGameTitle[MSG_SIZ], lastLoadPositionTitle[MSG_SIZ];
 ChessMove lastLoadGameStart = EndOfFile;
 int doubleClick;
+Boolean addToBookFlag;
 
 void
 UserMoveEvent(int fromX, int fromY, int toX, int toY, int promoChar)
@@ -6742,6 +6952,13 @@ UserMoveEvent(int fromX, int fromY, int toX, int toY, int promoChar)
 	    DrawPosition(FALSE, boards[currentMove]);
 	    return;
 	} else if (toX >= 0 && toY >= 0) {
+	    if(!appData.pieceMenu && toX == fromX && toY == fromY && boards[0][rf][ff] != EmptySquare) {
+		ChessSquare q, p = boards[0][rf][ff];
+		if(p >= BlackPawn) p = BLACK_TO_WHITE p;
+		if(CHUPROMOTED p < BlackPawn) p = q = CHUPROMOTED boards[0][rf][ff];
+		else p = CHUDEMOTED (q = boards[0][rf][ff]);
+		if(PieceToChar(q) == '+') gatingPiece = p;
+	    }
 	    boards[0][toY][toX] = boards[0][fromY][fromX];
 	    if(fromX == BOARD_LEFT-2) { // handle 'moves' out of holdings
 		if(boards[0][fromY][0] != EmptySquare) {
@@ -6762,7 +6979,7 @@ UserMoveEvent(int fromX, int fromY, int toX, int toY, int promoChar)
         return;
     }
 
-    if(toX < 0 || toY < 0) return;
+    if((toX < 0 || toY < 0) && (fromY != DROP_RANK || fromX != EmptySquare)) return;
     pup = boards[currentMove][toY][toX];
 
     /* [HGM] If move started in holdings, it means a drop. Convert to standard form */
@@ -6774,7 +6991,7 @@ UserMoveEvent(int fromX, int fromY, int toX, int toY, int promoChar)
 	   // holdings might not be sent yet in ICS play; we have to figure out which piece belongs here
 	   if(fromX == 0) fromY = BOARD_HEIGHT-1 - fromY; // black holdings upside-down
 	   fromX = fromX ? WhitePawn : BlackPawn; // first piece type in selected holdings
-	   while(PieceToChar(fromX) == '.' || PieceToNumber(fromX) != fromY && fromX != (int) EmptySquare) fromX++;
+	   while(PieceToChar(fromX) == '.' || PieceToChar(fromX) == '+' || PieceToNumber(fromX) != fromY && fromX != (int) EmptySquare) fromX++;
          fromY = DROP_RANK;
     }
 
@@ -6782,7 +6999,7 @@ UserMoveEvent(int fromX, int fromY, int toX, int toY, int promoChar)
     moveType = LegalityTest(boards[currentMove], PosFlags(currentMove),
                                          fromY, fromX, toY, toX, promoChar);
 
-    if(fromY == DROP_RANK && fromX == EmptySquare && (gameMode == AnalyzeMode || gameMode == EditGame)) moveType = NormalMove;
+    if(fromY == DROP_RANK && fromX == EmptySquare && (gameMode == AnalyzeMode || gameMode == EditGame || PosFlags(0) & F_NULL_MOVE)) moveType = NormalMove;
 
     /* [HGM] but possibly ignore an IllegalMove result */
     if (appData.testLegality) {
@@ -6796,6 +7013,16 @@ UserMoveEvent(int fromX, int fromY, int toX, int toY, int promoChar)
         if(ExcludeOneMove(fromY, fromX, toY, toX, promoChar, '*')) // toggle
 	     ClearPremoveHighlights(); // was included
 	else ClearHighlights(), SetPremoveHighlights(ff, rf, ft, rt); // exclusion indicated  by premove highlights
+	return;
+    }
+
+    if(addToBookFlag) { // adding moves to book
+	char buf[MSG_SIZ], move[MSG_SIZ];
+        CoordsToAlgebraic(boards[currentMove], PosFlags(currentMove), fromY, fromX, toY, toX, promoChar, move);
+	snprintf(buf, MSG_SIZ, "  0.0%%     1  %s\n", move);
+	AddBookMove(buf);
+	addToBookFlag = FALSE;
+	ClearHighlights();
 	return;
     }
 
@@ -6998,27 +7225,66 @@ FinishMove (ChessMove moveType, int fromX, int fromY, int toX, int toY, int prom
 }
 
 void
+MarkByFEN(char *fen)
+{
+	int r, f;
+	if(!appData.markers || !appData.highlightDragging) return;
+	for(r=0; r<BOARD_HEIGHT; r++) for(f=BOARD_LEFT; f<BOARD_RGHT; f++) legal[r][f] = 0;
+	r=BOARD_HEIGHT-1; f=BOARD_LEFT;
+	while(*fen) {
+	    int s = 0;
+	    marker[r][f] = 0;
+	    if(*fen == 'M') legal[r][f] = 2; else // request promotion choice
+	    if(*fen >= 'A' && *fen <= 'Z') legal[r][f] = 1; else
+	    if(*fen >= 'a' && *fen <= 'z') *fen += 'A' - 'a';
+	    if(*fen == '/' && f > BOARD_LEFT) f = BOARD_LEFT, r--; else
+	    if(*fen == 'T') marker[r][f++] = 0; else
+	    if(*fen == 'Y') marker[r][f++] = 1; else
+	    if(*fen == 'G') marker[r][f++] = 3; else
+	    if(*fen == 'B') marker[r][f++] = 4; else
+	    if(*fen == 'C') marker[r][f++] = 5; else
+	    if(*fen == 'M') marker[r][f++] = 6; else
+	    if(*fen == 'W') marker[r][f++] = 7; else
+	    if(*fen == 'D') marker[r][f++] = 8; else
+	    if(*fen == 'R') marker[r][f++] = 2; else {
+		while(*fen <= '9' && *fen >= '0') s = 10*s + *fen++ - '0';
+	      f += s; fen -= s>0;
+	    }
+	    while(f >= BOARD_RGHT) f -= BOARD_RGHT - BOARD_LEFT, r--;
+	    if(r < 0) break;
+	    fen++;
+	}
+	DrawPosition(TRUE, NULL);
+}
+
+static char baseMarker[BOARD_RANKS][BOARD_FILES], baseLegal[BOARD_RANKS][BOARD_FILES];
+
+void
 Mark (Board board, int flags, ChessMove kind, int rf, int ff, int rt, int ft, VOIDSTAR closure)
 {
     typedef char Markers[BOARD_RANKS][BOARD_FILES];
     Markers *m = (Markers *) closure;
-    if(rf == fromY && ff == fromX)
+    if(rf == fromY && ff == fromX && (killX < 0 ? !(rt == rf && ft == ff) && legNr & 1 : rt == killY && ft == killX || legNr & 2))
 	(*m)[rt][ft] = 1 + (board[rt][ft] != EmptySquare
 			 || kind == WhiteCapturesEnPassant
-			 || kind == BlackCapturesEnPassant);
-    else if(flags & F_MANDATORY_CAPTURE && board[rt][ft] != EmptySquare) (*m)[rt][ft] = 3;
+			 || kind == BlackCapturesEnPassant) + 3*(kind == FirstLeg && killX < 0), legal[rt][ft] = 1;
+    else if(flags & F_MANDATORY_CAPTURE && board[rt][ft] != EmptySquare) (*m)[rt][ft] = 3, legal[rt][ft] = 1;
 }
+
+static int hoverSavedValid;
 
 void
 MarkTargetSquares (int clear)
 {
-  int x, y;
-  if(clear) // no reason to ever suppress clearing
-    for(x=0; x<BOARD_WIDTH; x++) for(y=0; y<BOARD_HEIGHT; y++) marker[y][x] = 0;
-  if(!appData.markers || !appData.highlightDragging || appData.icsActive && gameInfo.variant < VariantShogi ||
-     !appData.testLegality || gameMode == EditPosition) return;
-  if(!clear) {
+  int x, y, sum=0;
+  if(clear) { // no reason to ever suppress clearing
+    for(x=0; x<BOARD_WIDTH; x++) for(y=0; y<BOARD_HEIGHT; y++) sum += marker[y][x], marker[y][x] = 0;
+    hoverSavedValid = 0;
+    if(!sum) return; // nothing was cleared,no redraw needed
+  } else {
     int capt = 0;
+    if(!appData.markers || !appData.highlightDragging || appData.icsActive && gameInfo.variant < VariantShogi ||
+       !appData.testLegality && !pieceDefs || gameMode == EditPosition) return;
     GenLegal(boards[currentMove], PosFlags(currentMove), Mark, (void*) marker, EmptySquare);
     if(PosFlags(0) & F_MANDATORY_CAPTURE) {
       for(x=0; x<BOARD_WIDTH; x++) for(y=0; y<BOARD_HEIGHT; y++) if(marker[y][x]>1) capt++;
@@ -7048,16 +7314,57 @@ ChessSquare gatingPiece = EmptySquare; // exported to front-end, for dragging
 int
 CanPromote (ChessSquare piece, int y)
 {
+        int zone = (gameInfo.variant == VariantChuChess ? 3 : 1);
 	if(gameMode == EditPosition) return FALSE; // no promotions when editing position
 	// some variants have fixed promotion piece, no promotion at all, or another selection mechanism
-	if(gameInfo.variant == VariantShogi    || gameInfo.variant == VariantXiangqi ||
+	if(IS_SHOGI(gameInfo.variant)          || gameInfo.variant == VariantXiangqi ||
 	   gameInfo.variant == VariantSuper    || gameInfo.variant == VariantGreat   ||
 	   gameInfo.variant == VariantShatranj || gameInfo.variant == VariantCourier ||
-					          gameInfo.variant == VariantMakruk) return FALSE;
-	return (piece == BlackPawn && y == 1 ||
-		piece == WhitePawn && y == BOARD_HEIGHT-2 ||
+         gameInfo.variant == VariantMakruk   || gameInfo.variant == VariantASEAN) return FALSE;
+	return (piece == BlackPawn && y <= zone ||
+		piece == WhitePawn && y >= BOARD_HEIGHT-1-zone ||
 		piece == BlackLance && y == 1 ||
 		piece == WhiteLance && y == BOARD_HEIGHT-2 );
+}
+
+void
+HoverEvent (int xPix, int yPix, int x, int y)
+{
+	static int oldX = -1, oldY = -1, oldFromX = -1, oldFromY = -1;
+	int r, f;
+	if(!first.highlight) return;
+	if(fromX != oldFromX || fromY != oldFromY)  oldX = oldY = -1; // kludge to fake entry on from-click
+	if(x == oldX && y == oldY) return; // only do something if we enter new square
+	oldFromX = fromX; oldFromY = fromY;
+	if(oldX == -1 && oldY == -1 && x == fromX && y == fromY) { // record markings after from-change
+	  for(r=0; r<BOARD_HEIGHT; r++) for(f=BOARD_LEFT; f<BOARD_RGHT; f++)
+	    baseMarker[r][f] = marker[r][f], baseLegal[r][f] = legal[r][f];
+	  hoverSavedValid = 1;
+	} else if(oldX != x || oldY != y) {
+	  // [HGM] lift: entered new to-square; redraw arrow, and inform engine
+	  if(hoverSavedValid) // don't restore markers that are supposed to be cleared
+	  for(r=0; r<BOARD_HEIGHT; r++) for(f=BOARD_LEFT; f<BOARD_RGHT; f++)
+	    marker[r][f] = baseMarker[r][f], legal[r][f] = baseLegal[r][f];
+	  if((marker[y][x] == 2 || marker[y][x] == 6) && legal[y][x]) {
+ 	    char buf[MSG_SIZ];
+	    snprintf(buf, MSG_SIZ, "hover %c%d\n", x + AAA, y + ONE - '0');
+	    SendToProgram(buf, &first);
+	  }
+	  oldX = x; oldY = y;
+//	  SetHighlights(fromX, fromY, x, y);
+	}
+}
+
+void ReportClick(char *action, int x, int y)
+{
+	char buf[MSG_SIZ]; // Inform engine of what user does
+	int r, f;
+	if(action[0] == 'l') // mark any target square of a lifted piece as legal to-square, clear markers
+	  for(r=0; r<BOARD_HEIGHT; r++) for(f=BOARD_LEFT; f<BOARD_RGHT; f++)
+	    legal[r][f] = !pieceDefs || !appData.markers, marker[r][f] = 0;
+	if(!first.highlight || gameMode == EditPosition) return;
+	snprintf(buf, MSG_SIZ, "%s %c%d%s\n", action, x+AAA, y+ONE-'0', controlKey && action[0]=='p' ? "," : "");
+	SendToProgram(buf, &first);
 }
 
 void
@@ -7075,6 +7382,7 @@ LeftClick (ClickType clickType, int xPix, int yPix)
     prevClickTime = lastClickTime; GetTimeMark(&lastClickTime);
 
     if (clickType == Press) ErrorPopDown();
+    lastClickType = clickType, lastLeftX = xPix, lastLeftY = yPix; // [HGM] alien: remember state
 
     x = EventToSquare(xPix, BOARD_WIDTH);
     y = EventToSquare(yPix, BOARD_HEIGHT);
@@ -7152,13 +7460,14 @@ LeftClick (ClickType clickType, int xPix, int yPix)
       if(gameMode == AnalyzeMode && (pausing || controlKey) && first.excludeMoves) { // use pause state to exclude moves
 	doubleClick = TRUE; gatingPiece = boards[currentMove][y][x];
       }
-      fromX = x; fromY = y; toX = toY = -1;
+      fromX = x; fromY = y; toX = toY = killX = killY = -1;
       if(!appData.oneClick || !OnlyMove(&x, &y, FALSE) ||
 	 // even if only move, we treat as normal when this would trigger a promotion popup, to allow sweep selection
 	 appData.sweepSelect && CanPromote(boards[currentMove][fromY][fromX], fromY) && originalY != y) {
 	    /* First square */
 	    if (OKToStartUserMove(fromX, fromY)) {
 		second = 0;
+		ReportClick("lift", x, y);
 		MarkTargetSquares(0);
 		if(gameMode == EditPosition && controlKey) gatingPiece = boards[currentMove][fromY][fromX];
 		DragPieceBegin(xPix, yPix, FALSE); dragging = 1;
@@ -7190,24 +7499,26 @@ LeftClick (ClickType clickType, int xPix, int yPix)
 	/* Check if clicking again on the same color piece */
 	fromP = boards[currentMove][fromY][fromX];
 	toP = boards[currentMove][y][x];
-	frc = gameInfo.variant == VariantFischeRandom || gameInfo.variant == VariantCapaRandom || gameInfo.variant == VariantSChess;
- 	if ((WhitePawn <= fromP && fromP <= WhiteKing &&
+	frc = appData.fischerCastling || gameInfo.variant == VariantSChess;
+ 	if( (killX < 0 || x != fromX || y != fromY) && // [HGM] lion: do not interpret igui as deselect!
+	   ((WhitePawn <= fromP && fromP <= WhiteKing &&
 	     WhitePawn <= toP && toP <= WhiteKing &&
 	     !(fromP == WhiteKing && toP == WhiteRook && frc) &&
 	     !(fromP == WhiteRook && toP == WhiteKing && frc)) ||
 	    (BlackPawn <= fromP && fromP <= BlackKing &&
 	     BlackPawn <= toP && toP <= BlackKing &&
 	     !(fromP == BlackRook && toP == BlackKing && frc) && // allow also RxK as FRC castling
-	     !(fromP == BlackKing && toP == BlackRook && frc))) {
+	     !(fromP == BlackKing && toP == BlackRook && frc)))) {
 	    /* Clicked again on same color piece -- changed his mind */
 	    second = (x == fromX && y == fromY);
+	    killX = killY = -1;
 	    if(second && gameMode == AnalyzeMode && SubtractTimeMarks(&lastClickTime, &prevClickTime) < 200) {
 		second = FALSE; // first double-click rather than scond click
 		doubleClick = first.excludeMoves; // used by UserMoveEvent to recognize exclude moves
 	    }
 	    promoDefaultAltered = FALSE;
 	    MarkTargetSquares(1);
-	   if(!second || appData.oneClick && !OnlyMove(&x, &y, TRUE)) {
+	   if(!(second && appData.oneClick && OnlyMove(&x, &y, TRUE))) {
 	    if (appData.highlightDragging) {
 		SetHighlights(x, y, -1, -1);
 	    } else {
@@ -7221,6 +7532,7 @@ LeftClick (ClickType clickType, int xPix, int yPix)
 		else gatingPiece = doubleClick ? fromP : EmptySquare;
 		fromX = x;
 		fromY = y; dragging = 1;
+		ReportClick("lift", x, y);
 		MarkTargetSquares(0);
 		DragPieceBegin(xPix, yPix, FALSE);
 		if(appData.sweepSelect && CanPromote(piece = boards[currentMove][y][x], y)) {
@@ -7237,7 +7549,7 @@ LeftClick (ClickType clickType, int xPix, int yPix)
 	if(x < BOARD_LEFT || x >= BOARD_RGHT) return;
     }
 
-    if (clickType == Release && x == fromX && y == fromY) {
+    if (clickType == Release && x == fromX && y == fromY && killX < 0) {
 	DragPieceEnd(xPix, yPix); dragging = 0;
 	if(clearFlag) {
 	    // a deferred attempt to click-click move an empty square on top of a piece
@@ -7257,6 +7569,7 @@ LeftClick (ClickType clickType, int xPix, int yPix)
 	    second = sweepSelecting = 0;
 	    fromX = fromY = -1;
 	    gatingPiece = EmptySquare;
+	    MarkTargetSquares(1);
 	    ClearHighlights();
 	    gotPremove = 0;
 	    ClearPremoveHighlights();
@@ -7269,26 +7582,43 @@ LeftClick (ClickType clickType, int xPix, int yPix)
 
     clearFlag = 0;
 
+    if(gameMode != EditPosition && !appData.testLegality && !legal[y][x] &&
+       fromX >= BOARD_LEFT && fromX < BOARD_RGHT && (x != killX || y != killY) && !sweepSelecting) {
+	if(dragging) DragPieceEnd(xPix, yPix), dragging = 0;
+	DisplayMessage(_("only marked squares are legal"),"");
+	DrawPosition(TRUE, NULL);
+	return; // ignore to-click
+    }
+
     /* we now have a different from- and (possibly off-board) to-square */
     /* Completed move */
     if(!sweepSelecting) {
 	toX = x;
 	toY = y;
-    } else sweepSelecting = 0; // this must be the up-click corresponding to the down-click that started the sweep
+    }
+
+    piece = boards[currentMove][fromY][fromX];
 
     saveAnimate = appData.animate;
     if (clickType == Press) {
+	if(gameInfo.variant == VariantChuChess && piece != WhitePawn && piece != BlackPawn) defaultPromoChoice = piece;
 	if(gameMode == EditPosition && boards[currentMove][fromY][fromX] == EmptySquare) {
 	    // must be Edit Position mode with empty-square selected
 	    fromX = x; fromY = y; DragPieceBegin(xPix, yPix, FALSE); dragging = 1; // consider this a new attempt to drag
 	    if(x >= BOARD_LEFT && x < BOARD_RGHT) clearFlag = 1; // and defer click-click move of empty-square to up-click
 	    return;
 	}
-	if(HasPromotionChoice(fromX, fromY, toX, toY, &promoChoice, FALSE)) {
+	if(dragging == 2) {  // [HGM] lion: just turn buttonless drag into normal drag, and let release to the job
+	    return;
+	}
+	if(x == killX && y == killY) {              // second click on this square, which was selected as first-leg target
+	    killX = killY = -1;                     // this informs us no second leg is coming, so treat as to-click without intermediate
+	} else
+	if(marker[y][x] == 5) return; // [HGM] lion: to-click on cyan square; defer action to release
+	if(legal[y][x] == 2 || HasPromotionChoice(fromX, fromY, toX, toY, &promoChoice, FALSE)) {
 	  if(appData.sweepSelect) {
-	    ChessSquare piece = boards[currentMove][fromY][fromX];
 	    promoSweep = defaultPromoChoice;
-	    if(PieceToChar(PROMOTED piece) == '+') promoSweep = PROMOTED piece;
+	    if(gameInfo.variant != VariantChuChess && PieceToChar(CHUPROMOTED piece) == '+') promoSweep = CHUPROMOTED piece;
 	    selectFlag = 0; lastX = xPix; lastY = yPix;
 	    Sweep(0); // Pawn that is going to promote: preview promotion piece
 	    sweepSelecting = 1;
@@ -7298,6 +7628,13 @@ LeftClick (ClickType clickType, int xPix, int yPix)
 	  return; // promo popup appears on up-click
 	}
 	/* Finish clickclick move */
+	if (appData.animate || appData.highlightLastMove) {
+	    SetHighlights(fromX, fromY, toX, toY);
+	} else {
+	    ClearHighlights();
+	}
+    } else if(sweepSelecting) { // this must be the up-click corresponding to the down-click that started the sweep
+	sweepSelecting = 0; appData.animate = FALSE; // do not animate, a selected piece already on to-square
 	if (appData.animate || appData.highlightLastMove) {
 	    SetHighlights(fromX, fromY, toX, toY);
 	} else {
@@ -7313,6 +7650,18 @@ LeftClick (ClickType clickType, int xPix, int yPix)
 	    ClearHighlights();
 	}
 #endif
+	if(gameInfo.variant == VariantChuChess && piece != WhitePawn && piece != BlackPawn) defaultPromoChoice = piece;
+	if(marker[y][x] == 5) { // [HGM] lion: this was the release of a to-click or drag on a cyan square
+	  dragging *= 2;            // flag button-less dragging if we are dragging
+	  MarkTargetSquares(1);
+	  if(x == killX && y == killY) killX = killY = -1; else {
+	    killX = x; killY = y;     //remeber this square as intermediate
+	    ReportClick("put", x, y); // and inform engine
+	    ReportClick("lift", x, y);
+	    MarkTargetSquares(0);
+	    return;
+	  }
+	}
 	DragPieceEnd(xPix, yPix); dragging = 0;
 	/* Don't animate move and drag both */
 	appData.animate = FALSE;
@@ -7348,6 +7697,7 @@ LeftClick (ClickType clickType, int xPix, int yPix)
 
     // off-board moves should not be highlighted
     if(x < 0 || y < 0) ClearHighlights();
+    else ReportClick("put", x, y);
 
     if(gatingPiece != EmptySquare && gameInfo.variant == VariantSChess) promoChoice = ToLower(PieceToChar(gatingPiece));
 
@@ -7367,7 +7717,7 @@ LeftClick (ClickType clickType, int xPix, int yPix)
 	    DisplayMessage("Click in holdings to choose piece", "");
 	    return;
 	}
-	PromotionPopUp();
+	PromotionPopUp(promoChoice);
     } else {
 	int oldMove = currentMove;
 	UserMoveEvent(fromX, fromY, toX, toY, promoChoice);
@@ -7761,6 +8111,7 @@ Adjudicate (ChessProgramState *cps)
 	      case MT_NONE:
 	      default:
 		break;
+	      case MT_STEALMATE:
 	      case MT_STALEMATE:
 	      case MT_STAINMATE:
 		reason = "Xboard adjudication: Stalemate";
@@ -7999,11 +8350,66 @@ Adjudicate (ChessProgramState *cps)
 	return 0;
 }
 
+typedef int (CDECL *PPROBE_EGBB) (int player, int *piece, int *square);
+typedef int (CDECL *PLOAD_EGBB) (char *path, int cache_size, int load_options);
+static int egbbCode[] = { 6, 5, 4, 3, 2, 1 };
+
+static int
+BitbaseProbe ()
+{
+    int pieces[10], squares[10], cnt=0, r, f, res;
+    static int loaded;
+    static PPROBE_EGBB probeBB;
+    if(!appData.testLegality) return 10;
+    if(BOARD_HEIGHT != 8 || BOARD_RGHT-BOARD_LEFT != 8) return 12;
+    if(gameInfo.holdingsSize && gameInfo.variant != VariantSuper && gameInfo.variant != VariantSChess) return 12;
+    if(loaded == 2 && forwardMostMove < 2) loaded = 0; // retry on new game
+    for(r=0; r<BOARD_HEIGHT; r++) for(f=BOARD_LEFT; f<BOARD_RGHT; f++) {
+	ChessSquare piece = boards[forwardMostMove][r][f];
+	int black = (piece >= BlackPawn);
+	int type = piece - black*BlackPawn;
+	if(piece == EmptySquare) continue;
+	if(type != WhiteKing && type > WhiteQueen) return 12; // unorthodox piece
+	if(type == WhiteKing) type = WhiteQueen + 1;
+	type = egbbCode[type];
+	squares[cnt] = r*(BOARD_RGHT - BOARD_LEFT) + f - BOARD_LEFT;
+        pieces[cnt] = type + black*6;
+	if(++cnt > 5) return 11;
+    }
+    pieces[cnt] = squares[cnt] = 0;
+    // probe EGBB
+    if(loaded == 2) return 13; // loading failed before
+    if(loaded == 0) {
+	char *p, *path = strstr(appData.egtFormats, "scorpio:"), buf[MSG_SIZ];
+	HMODULE lib;
+	PLOAD_EGBB loadBB;
+	loaded = 2; // prepare for failure
+	if(!path) return 13; // no egbb installed
+	strncpy(buf, path + 8, MSG_SIZ);
+	if(p = strchr(buf, ',')) *p = NULLCHAR; else p = buf + strlen(buf);
+	snprintf(p, MSG_SIZ - strlen(buf), "%c%s", SLASH, EGBB_NAME);
+	lib = LoadLibrary(buf);
+	if(!lib) { DisplayError(_("could not load EGBB library"), 0); return 13; }
+	loadBB = (PLOAD_EGBB) GetProcAddress(lib, "load_egbb_xmen");
+	probeBB = (PPROBE_EGBB) GetProcAddress(lib, "probe_egbb_xmen");
+	if(!loadBB || !probeBB) { DisplayError(_("wrong EGBB version"), 0); return 13; }
+	p[1] = NULLCHAR; loadBB(buf, 64*1028, 2); // 2 = SMART_LOAD
+	loaded = 1; // success!
+    }
+    res = probeBB(forwardMostMove & 1, pieces, squares);
+    return res > 0 ? 1 : res < 0 ? -1 : 0;
+}
+
 char *
 SendMoveToBookUser (int moveNr, ChessProgramState *cps, int initial)
 {   // [HGM] book: this routine intercepts moves to simulate book replies
     char *bookHit = NULL;
 
+    if(cps->drawDepth && BitbaseProbe() == 0) { // [HG} egbb: reduce depth in drawn position
+	char buf[MSG_SIZ];
+	snprintf(buf, MSG_SIZ, "sd %d\n", cps->drawDepth);
+	SendToProgram(buf, cps);
+    }
     //first determine if the incoming move brings opponent into his book
     if(appData.usePolyglotBook && (cps == &first ? !appData.firstHasOwnBookUCI : !appData.secondHasOwnBookUCI))
 	bookHit = ProbeBook(moveNr+1, appData.polyglotBook); // returns move
@@ -8013,6 +8419,7 @@ SendMoveToBookUser (int moveNr, ChessProgramState *cps, int initial)
 	SendToProgram("force\n", cps);
 	cps->bookSuspend = TRUE; // flag indicating it has to be restarted
     }
+    if(bookHit) setboardSpoiledMachineBlack = FALSE; // suppress 'go' in SendMoveToProgram
     if(!initial) SendMoveToProgram(moveNr, cps); // with hit on initial position there is no move
     // now arrange restart after book miss
     if(bookHit) {
@@ -8085,11 +8492,12 @@ static char stashedInputMove[MSG_SIZ];
 void
 HandleMachineMove (char *message, ChessProgramState *cps)
 {
+    static char firstLeg[20];
     char machineMove[MSG_SIZ], buf1[MSG_SIZ*10], buf2[MSG_SIZ];
     char realname[MSG_SIZ];
     int fromX, fromY, toX, toY;
     ChessMove moveType;
-    char promoChar;
+    char promoChar, roar;
     char *p, *pv=buf1;
     int machineWhite, oldError;
     char *bookHit;
@@ -8227,14 +8635,32 @@ FakeBookMove: // [HGM] book: we jump here to simulate machine moves after book h
 	}
 
         if(cps->alphaRank) AlphaRank(machineMove, 4);
+
+	// [HGM] lion: (some very limited) support for Alien protocol
+	killX = killY = -1;
+	if(machineMove[strlen(machineMove)-1] == ',') { // move ends in coma: non-final leg of composite move
+	    safeStrCpy(firstLeg, machineMove, 20); // just remember it for processing when second leg arrives
+	    return;
+	} else if(firstLeg[0]) { // there was a previous leg;
+	    // only support case where same piece makes two step (and don't even test that!)
+	    char buf[20], *p = machineMove+1, *q = buf+1, f;
+	    safeStrCpy(buf, machineMove, 20);
+	    while(isdigit(*q)) q++; // find start of to-square
+	    safeStrCpy(machineMove, firstLeg, 20);
+	    while(isdigit(*p)) p++;
+	    safeStrCpy(p, q, 20); // glue to-square of second leg to from-square of first, to process over-all move
+	    sscanf(buf, "%c%d", &f, &killY); killX = f - AAA; killY -= ONE - '0'; // pass intermediate square to MakeMove in global
+	    firstLeg[0] = NULLCHAR;
+	}
+
         if (!ParseOneMove(machineMove, forwardMostMove, &moveType,
                               &fromX, &fromY, &toX, &toY, &promoChar)) {
 	    /* Machine move could not be parsed; ignore it. */
 	  snprintf(buf1, MSG_SIZ*10, _("Illegal move \"%s\" from %s machine"),
 		    machineMove, _(cps->which));
 	    DisplayMoveError(buf1);
-            snprintf(buf1, MSG_SIZ*10, "Xboard: Forfeit due to invalid move: %s (%c%c%c%c) res=%d",
-                    machineMove, fromX+AAA, fromY+ONE, toX+AAA, toY+ONE, moveType);
+            snprintf(buf1, MSG_SIZ*10, "Xboard: Forfeit due to invalid move: %s (%c%c%c%c via %c%c) res=%d",
+                    machineMove, fromX+AAA, fromY+ONE, toX+AAA, toY+ONE, killX+AAA, killY+ONE, moveType);
 	    if (gameMode == TwoMachinesPlay) {
 	      GameEnds(machineWhite ? BlackWins : WhiteWins,
                        buf1, GE_XBOARD);
@@ -8257,7 +8683,7 @@ FakeBookMove: // [HGM] book: we jump here to simulate machine moves after book h
                 GameEnds(machineWhite ? BlackWins : WhiteWins,
                            buf1, GE_XBOARD);
 		return;
-           } else if(gameInfo.variant != VariantFischeRandom && gameInfo.variant != VariantCapaRandom)
+           } else if(!appData.fischerCastling)
            /* [HGM] Kludge to handle engines that send FRC-style castling
               when they shouldn't (like TSCP-Gothic) */
            switch(moveType) {
@@ -8289,8 +8715,19 @@ FakeBookMove: // [HGM] book: we jump here to simulate machine moves after book h
 
 	MakeMove(fromX, fromY, toX, toY, promoChar);/*updates forwardMostMove*/
 
+        /* Test suites abort the 'game' after one move */
+        if(*appData.finger) {
+           static FILE *f;
+           char *fen = PositionToFEN(backwardMostMove, NULL, 0); // no counts in EPD
+           if(!f) f = fopen(appData.finger, "w");
+           if(f) fprintf(f, "%s bm %s;\n", fen, parseList[backwardMostMove]), fflush(f);
+           else { DisplayFatalError("Bad output file", errno, 0); return; }
+           free(fen);
+           GameEnds(GameUnfinished, NULL, GE_XBOARD);
+        }
+
         /* [AS] Adjudicate game if needed (note: remember that forwardMostMove now points past the last move) */
-        if( gameMode == TwoMachinesPlay && adjudicateLossThreshold != 0 && forwardMostMove >= adjudicateLossPlies ) {
+        if( gameMode == TwoMachinesPlay && appData.adjudicateLossThreshold != 0 && forwardMostMove >= adjudicateLossPlies ) {
             int count = 0;
 
             while( count < adjudicateLossPlies ) {
@@ -8300,7 +8737,7 @@ FakeBookMove: // [HGM] book: we jump here to simulate machine moves after book h
                     score = -score; /* Flip score for winning side */
                 }
 
-                if( score > adjudicateLossThreshold ) {
+                if( score > appData.adjudicateLossThreshold ) {
                     break;
                 }
 
@@ -8344,7 +8781,6 @@ FakeBookMove: // [HGM] book: we jump here to simulate machine moves after book h
 			(unsigned int)programStats.nodes / (10*abs(programStats.time) + 1.),
 			programStats.movelist);
 		SendToICS(buf);
-if(appData.debugMode) fprintf(debugFP, "nodes = %d, %lld\n", (int) programStats.nodes, programStats.nodes);
 	  }
 	}
 #endif
@@ -8376,10 +8812,12 @@ if(appData.debugMode) fprintf(debugFP, "nodes = %d, %lld\n", (int) programStats.
 	    cps->other->maybeThinking = TRUE;
 	}
 
+	roar = (killX >= 0 && IS_LION(boards[forwardMostMove][toY][toX]));
+
 	ShowMove(fromX, fromY, toX, toY); /*updates currentMove*/
 
         if (!pausing && appData.ringBellAfterMoves) {
-	    RingBell();
+	    if(!roar) RingBell();
 	}
 
 	/*
@@ -8430,16 +8868,53 @@ if(appData.debugMode) fprintf(debugFP, "nodes = %d, %lld\n", (int) programStats.
     }
 
     if (!strncmp(message, "setup ", 6) && 
-	(!appData.testLegality || gameInfo.variant == VariantFairy || NonStandardBoardSize())
+	(!appData.testLegality || gameInfo.variant == VariantFairy || gameInfo.variant == VariantUnknown ||
+          NonStandardBoardSize(gameInfo.variant, gameInfo.boardWidth, gameInfo.boardHeight, gameInfo.holdingsSize))
 					) { // [HGM] allow first engine to define opening position
-      int dummy, s=6; char buf[MSG_SIZ];
+      int dummy, w, h, hand, s=6; char buf[MSG_SIZ], varName[MSG_SIZ];
       if(appData.icsActive || forwardMostMove != 0 || cps != &first) return;
-      if(sscanf(message, "setup (%s", buf) == 1) s = 8 + strlen(buf), buf[s-9] = NULLCHAR, SetCharTable(pieceToChar, buf);
+      *buf = NULLCHAR;
+      if(sscanf(message, "setup (%s", buf) == 1) {
+        s = 8 + strlen(buf), buf[s-9] = NULLCHAR, SetCharTable(pieceToChar, buf);
+        ASSIGN(appData.pieceToCharTable, buf);
+      }
+      dummy = sscanf(message+s, "%dx%d+%d_%s", &w, &h, &hand, varName);
+      if(dummy >= 3) {
+        while(message[s] && message[s++] != ' ');
+        if(BOARD_HEIGHT != h || BOARD_WIDTH != w + 4*(hand != 0) || gameInfo.holdingsSize != hand ||
+           dummy == 4 && gameInfo.variant != StringToVariant(varName) ) { // engine wants to change board format or variant
+	    appData.NrFiles = w; appData.NrRanks = h; appData.holdingsSize = hand;
+	    if(dummy == 4) gameInfo.variant = StringToVariant(varName);     // parent variant
+          InitPosition(1); // calls InitDrawingSizes to let new parameters take effect
+          if(*buf) SetCharTable(pieceToChar, buf); // do again, for it was spoiled by InitPosition
+          startedFromSetupPosition = FALSE;
+        }
+      }
       if(startedFromSetupPosition) return;
-      if(sscanf(message+s, "%dx%d+%d", &dummy, &dummy, &dummy) == 3) while(message[s] && message[s++] != ' '); // for compatibility with Alien Edition
-      ParseFEN(boards[0], &dummy, message+s);
+      ParseFEN(boards[0], &dummy, message+s, FALSE);
       DrawPosition(TRUE, boards[0]);
+      CopyBoard(initialPosition, boards[0]);
       startedFromSetupPosition = TRUE;
+      return;
+    }
+    if(sscanf(message, "piece %s %s", buf2, buf1) == 2) {
+      ChessSquare piece = WhitePawn;
+      char *p=buf2;
+      if(*p == '+') piece = CHUPROMOTED WhitePawn, p++;
+      piece += CharToPiece(*p) - WhitePawn;
+      if(cps != &first || appData.testLegality && *engineVariant == NULLCHAR
+      /* always accept definition of  */       && piece != WhiteFalcon && piece != BlackFalcon
+      /* wild-card pieces.            */       && piece != WhiteCobra  && piece != BlackCobra
+      /* For variants we don't have   */       && gameInfo.variant != VariantBerolina
+      /* correct rules for, we cannot */       && gameInfo.variant != VariantCylinder
+      /* enforce legality on our own! */       && gameInfo.variant != VariantUnknown
+                                               && gameInfo.variant != VariantGreat
+                                               && gameInfo.variant != VariantFairy    ) return;
+      if(piece < EmptySquare) {
+        pieceDefs = TRUE;
+        ASSIGN(pieceDesc[piece], buf1);
+        if(isupper(*p) && p[1] == '&') { ASSIGN(pieceDesc[WHITE_TO_BLACK piece], buf1); }
+      }
       return;
     }
     /* [HGM] Allow engine to set up a position. Don't ask me why one would
@@ -8450,7 +8925,7 @@ if(appData.debugMode) fprintf(debugFP, "nodes = %d, %lld\n", (int) programStats.
 
         GameEnds(GameUnfinished, "Engine aborts game", GE_XBOARD);
 
-        if (!ParseFEN(initial_position, &blackPlaysFirst, message + 9)) {
+        if (!ParseFEN(initial_position, &blackPlaysFirst, message + 9, FALSE)) {
             DisplayError(_("Bad FEN received from engine"), 0);
             return ;
         } else {
@@ -8550,6 +9025,36 @@ if(appData.debugMode) fprintf(debugFP, "nodes = %d, %lld\n", (int) programStats.
 	}
     }
     if (sscanf(message, "pong %d", &cps->lastPong) == 1) {
+	if(initPing == cps->lastPong) {
+	    if(gameInfo.variant == VariantUnknown) {
+		DisplayError(_("Engine did not send setup for non-standard variant"), 0);
+		*engineVariant = NULLCHAR; appData.variant = VariantNormal; // back to normal as error recovery?
+		GameEnds(GameUnfinished, NULL, GE_XBOARD);
+	    }
+	    initPing = -1;
+        }
+	return;
+    }
+    if(!strncmp(message, "highlight ", 10)) {
+	if(appData.testLegality && appData.markers) return;
+	MarkByFEN(message+10); // [HGM] alien: allow engine to mark board squares
+	return;
+    }
+    if(!strncmp(message, "click ", 6)) {
+	char f, c=0; int x, y; // [HGM] alien: allow engine to finish user moves (i.e. engine-driven one-click moving)
+	if(appData.testLegality || !appData.oneClick) return;
+	sscanf(message+6, "%c%d%c", &f, &y, &c);
+	x = f - 'a' + BOARD_LEFT, y -= ONE - '0';
+	if(flipView) x = BOARD_WIDTH-1 - x; else y = BOARD_HEIGHT-1 - y;
+	x = x*squareSize + (x+1)*lineGap + squareSize/2;
+	y = y*squareSize + (y+1)*lineGap + squareSize/2;
+	f = first.highlight; first.highlight = 0; // kludge to suppress lift/put in response to own clicks
+	if(lastClickType == Press) // if button still down, fake release on same square, to be ready for next click
+	    LeftClick(Release, lastLeftX, lastLeftY);
+	controlKey  = (c == ',');
+	LeftClick(Press, x, y);
+	LeftClick(Release, x, y);
+	first.highlight = f;
 	return;
     }
     /*
@@ -8674,6 +9179,10 @@ if(appData.debugMode) fprintf(debugFP, "nodes = %d, %lld\n", (int) programStats.
 	   outputs a string not ending in newline.
 	   Don't use it. */
 	cps->sendTime = 0;
+    }
+    if (cps->pseudo) { // [HGM] pseudo-engine, granted unusual powers
+	if (sscanf(message, "wtime %ld\n", &whiteTimeRemaining) == 1 || // adjust clock times
+	    sscanf(message, "btime %ld\n", &blackTimeRemaining) == 1   ) return;
     }
 
     /*
@@ -8892,7 +9401,7 @@ if(appData.debugMode) fprintf(debugFP, "nodes = %d, %lld\n", (int) programStats.
 	    DisplayInformation(_("Machine accepts your draw offer"));
 	    GameEnds(GameIsDrawn, "Draw agreed", GE_XBOARD);
 	  } else {
-            DisplayInformation(_("Machine offers a draw\nSelect Action / Draw to agree"));
+            DisplayInformation(_("Machine offers a draw.\nSelect Action / Draw to accept."));
 	  }
 	}
     }
@@ -8943,6 +9452,9 @@ if(appData.debugMode) fprintf(debugFP, "nodes = %d, %lld\n", (int) programStats.
 	    if (sscanf(message, "%d%c %d %d " u64Display " %[^\n]\n",
 		       &plylev, &plyext, &curscore, &time, &nodes, buf1) >= 5) {
 
+		if(nodes>>32 == u64Const(0xFFFFFFFF))   // [HGM] negative node count read
+		    nodes += u64Const(0x100000000);
+
 		if (plyext != ' ' && plyext != '\t') {
 		    time *= 100;
 		}
@@ -8971,7 +9483,10 @@ if(appData.debugMode) fprintf(debugFP, "nodes = %d, %lld\n", (int) programStats.
 			if(f = fopen(buf, "w")) { // export PV to applicable PV file
 				fprintf(f, "%5.2f/%-2d %s", curscore/100., plylev, pv);
 				fclose(f);
-			} else DisplayError(_("failed writing PV"), 0);
+			}
+			else
+			  /* TRANSLATORS: PV = principal variation, the variation the chess engine thinks is the best for everyone */
+			  DisplayError(_("failed writing PV"), 0);
 		}
 
 		tempStats.depth = plylev;
@@ -9234,6 +9749,7 @@ ParseGameHistory (char *game)
 	  case WhiteNonPromotion:
 	  case BlackNonPromotion:
 	  case NormalMove:
+	  case FirstLeg:
 	  case WhiteCapturesEnPassant:
 	  case BlackCapturesEnPassant:
 	  case WhiteKingSideCastle:
@@ -9357,7 +9873,7 @@ ParseGameHistory (char *game)
 	  default:
 	    break;
 	  case MT_CHECK:
-            if(gameInfo.variant != VariantShogi)
+            if(!IS_SHOGI(gameInfo.variant))
                 strcat(parseList[boardIndex - 1], "+");
 	    break;
 	  case MT_CHECKMATE:
@@ -9374,7 +9890,7 @@ void
 ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
 {
   ChessSquare captured = board[toY][toX], piece, king; int p, oldEP = EP_NONE, berolina = 0;
-  int promoRank = gameInfo.variant == VariantMakruk || gameInfo.variant == VariantGrand ? 3 : 1;
+  int promoRank = gameInfo.variant == VariantMakruk || gameInfo.variant == VariantGrand || gameInfo.variant == VariantChuChess ? 3 : 1;
 
     /* [HGM] compute & store e.p. status and castling rights for new position */
     /* we can always do that 'in place', now pointers to these rights are passed to ApplyMove */
@@ -9382,6 +9898,7 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
       if(gameInfo.variant == VariantBerolina) berolina = EP_BEROLIN_A;
       oldEP = (signed char)board[EP_STATUS];
       board[EP_STATUS] = EP_NONE;
+      board[EP_FILE] = board[EP_RANK] = 100;
 
   if (fromY == DROP_RANK) {
 	/* must be first */
@@ -9391,10 +9908,22 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
 	}
         piece = board[toY][toX] = (ChessSquare) fromX;
   } else {
+//      ChessSquare victim;
       int i;
 
-      if( board[toY][toX] != EmptySquare )
+      if( killX >= 0 && killY >= 0 ) // [HGM] lion: Lion trampled over something
+//           victim = board[killY][killX],
+           board[killY][killX] = EmptySquare,
            board[EP_STATUS] = EP_CAPTURE;
+
+      if( board[toY][toX] != EmptySquare ) {
+           board[EP_STATUS] = EP_CAPTURE;
+           if( (fromX != toX || fromY != toY) && // not igui!
+               (captured == WhiteLion && board[fromY][fromX] != BlackLion ||
+                captured == BlackLion && board[fromY][fromX] != WhiteLion   ) ) { // [HGM] lion: Chu Lion-capture rules
+               board[EP_STATUS] = EP_IRON_LION; // non-Lion x Lion: no counter-strike allowed
+           }
+      }
 
       if( board[fromY][fromX] == WhiteLance || board[fromY][fromX] == BlackLance ) {
            if( gameInfo.variant != VariantSuper && gameInfo.variant != VariantShogi )
@@ -9404,6 +9933,7 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
            if(fromY != toY) // [HGM] Xiangqi sideway Pawn moves should not count as 50-move breakers
 	       board[EP_STATUS] = EP_PAWN_MOVE;
            if( toY-fromY==2) {
+               board[EP_FILE] = (fromX + toX)/2; board[EP_RANK] = (fromY + toY)/2;
                if(toX>BOARD_LEFT   && board[toY][toX-1] == BlackPawn &&
 			gameInfo.variant != VariantBerolina || toX < fromX)
 	              board[EP_STATUS] = toX | berolina;
@@ -9416,6 +9946,7 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
            if(fromY != toY) // [HGM] Xiangqi sideway Pawn moves should not count as 50-move breakers
 	       board[EP_STATUS] = EP_PAWN_MOVE;
            if( toY-fromY== -2) {
+               board[EP_FILE] = (fromX + toX)/2; board[EP_RANK] = (fromY + toY)/2;
                if(toX>BOARD_LEFT   && board[toY][toX-1] == WhitePawn &&
 			gameInfo.variant != VariantBerolina || toX < fromX)
 	              board[EP_STATUS] = toX | berolina;
@@ -9424,6 +9955,11 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
 	              board[EP_STATUS] = toX;
 	   }
        }
+
+       if(fromY == 0) board[TOUCHED_W] |= 1<<fromX; else // new way to keep track of virginity
+       if(fromY == BOARD_HEIGHT-1) board[TOUCHED_B] |= 1<<fromX;
+       if(toY == 0) board[TOUCHED_W] |= 1<<toX; else
+       if(toY == BOARD_HEIGHT-1) board[TOUCHED_B] |= 1<<toX;
 
        for(i=0; i<nrCastlingRights; i++) {
            if(board[CASTLING][i] == fromX && castlingRank[i] == fromY ||
@@ -9449,6 +9985,7 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
     /* FRC castling assumed when king captures friendly rook. [HGM] or RxK for S-Chess */
     if (board[fromY][fromX] == WhiteKing && board[toY][toX] == WhiteRook ||
         board[fromY][fromX] == WhiteRook && board[toY][toX] == WhiteKing) {
+      board[EP_STATUS] = EP_NONE; // capture was fake!
       board[fromY][fromX] = EmptySquare;
       board[toY][toX] = EmptySquare;
       if((toX > fromX) != (piece == WhiteRook)) {
@@ -9458,6 +9995,7 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
       }
     } else if (board[fromY][fromX] == BlackKing && board[toY][toX] == BlackRook ||
                board[fromY][fromX] == BlackRook && board[toY][toX] == BlackKing) {
+      board[EP_STATUS] = EP_NONE;
       board[fromY][fromX] = EmptySquare;
       board[toY][toX] = EmptySquare;
       if((toX > fromX) != (piece == BlackRook)) {
@@ -9482,7 +10020,7 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
         board[toY][toX+1] = board[fromY][BOARD_LEFT];
         board[fromY][BOARD_LEFT] = EmptySquare;
     } else if ((board[fromY][fromX] == WhitePawn && gameInfo.variant != VariantXiangqi ||
-                board[fromY][fromX] == WhiteLance && gameInfo.variant != VariantSuper && gameInfo.variant != VariantShogi)
+                board[fromY][fromX] == WhiteLance && gameInfo.variant != VariantSuper && gameInfo.variant != VariantChu)
                && toY >= BOARD_HEIGHT-promoRank && promoChar // defaulting to Q is done elsewhere
                ) {
 	/* white pawn promotion */
@@ -9491,7 +10029,7 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
             board[toY][toX] = (ChessSquare) (PROMOTED board[toY][toX]);
 	board[fromY][fromX] = EmptySquare;
     } else if ((fromY >= BOARD_HEIGHT>>1)
-	       && (oldEP == toX || oldEP == EP_UNKNOWN || appData.testLegality)
+	       && (oldEP == toX || oldEP == EP_UNKNOWN || appData.testLegality || abs(toX - fromX) > 4)
 	       && (toX != fromX)
                && gameInfo.variant != VariantXiangqi
                && gameInfo.variant != VariantBerolina
@@ -9543,7 +10081,7 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
 	board[fromY][0] = EmptySquare;
 	board[toY][2] = BlackRook;
     } else if ((board[fromY][fromX] == BlackPawn && gameInfo.variant != VariantXiangqi ||
-                board[fromY][fromX] == BlackLance && gameInfo.variant != VariantSuper && gameInfo.variant != VariantShogi)
+                board[fromY][fromX] == BlackLance && gameInfo.variant != VariantSuper && gameInfo.variant != VariantChu)
 	       && toY < promoRank && promoChar
                ) {
 	/* black pawn promotion */
@@ -9552,7 +10090,7 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
             board[toY][toX] = (ChessSquare) (PROMOTED board[toY][toX]);
 	board[fromY][fromX] = EmptySquare;
     } else if ((fromY < BOARD_HEIGHT>>1)
-	       && (oldEP == toX || oldEP == EP_UNKNOWN || appData.testLegality)
+	       && (oldEP == toX || oldEP == EP_UNKNOWN || appData.testLegality || abs(toX - fromX) > 4)
 	       && (toX != fromX)
                && gameInfo.variant != VariantXiangqi
                && gameInfo.variant != VariantBerolina
@@ -9576,8 +10114,9 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
 		board[fromY][fromX+1] = EmptySquare;
 	}
     } else {
-	board[toY][toX] = board[fromY][fromX];
+	ChessSquare piece = board[fromY][fromX]; // [HGM] lion: allow for igui (where from == to)
 	board[fromY][fromX] = EmptySquare;
+	board[toY][toX] = piece;
     }
   }
 
@@ -9620,8 +10159,8 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
         p = (int) captured;
         if (p >= (int) BlackPawn) {
           p -= (int)BlackPawn;
-          if(gameInfo.variant == VariantShogi && DEMOTED p >= 0) {
-                  /* in Shogi restore piece to its original  first */
+          if(DEMOTED p >= 0 && PieceToChar(p) == '+') {
+                  /* Restore shogi-promoted piece to its original  first */
                   captured = (ChessSquare) (DEMOTED captured);
                   p = DEMOTED p;
           }
@@ -9631,7 +10170,7 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
           board[p][BOARD_WIDTH-1] = BLACK_TO_WHITE captured;
 	} else {
           p -= (int)WhitePawn;
-          if(gameInfo.variant == VariantShogi && DEMOTED p >= 0) {
+          if(DEMOTED p >= 0 && PieceToChar(p) == '+') {
                   captured = (ChessSquare) (DEMOTED captured);
                   p = DEMOTED p;
           }
@@ -9655,12 +10194,15 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
 	board[toY][toX] = EmptySquare;
       }
     }
+
     if(gameInfo.variant == VariantSChess && promoChar != NULLCHAR && promoChar != '=' && piece != WhitePawn && piece != BlackPawn) {
         board[fromY][fromX] = CharToPiece(piece < BlackPawn ? ToUpper(promoChar) : ToLower(promoChar)); // S-Chess gating
     } else
     if(promoChar == '+') {
         /* [HGM] Shogi-style promotions, to piece implied by original (Might overwrite ordinary Pawn promotion) */
-        board[toY][toX] = (ChessSquare) (PROMOTED piece);
+        board[toY][toX] = (ChessSquare) (CHUPROMOTED piece);
+        if(gameInfo.variant == VariantChuChess && (piece == WhiteKnight || piece == BlackKnight))
+          board[toY][toX] = piece + WhiteLion - WhiteKnight; // adjust Knight promotions to Lion
     } else if(!appData.testLegality && promoChar != NULLCHAR && promoChar != '=') { // without legality testing, unconditionally believe promoChar
         ChessSquare newPiece = CharToPiece(piece < BlackPawn ? ToUpper(promoChar) : ToLower(promoChar));
 	if((newPiece <= WhiteMan || newPiece >= BlackPawn && newPiece <= BlackMan) // unpromoted piece specified
@@ -9679,19 +10221,24 @@ ApplyMove (int fromX, int fromY, int toX, int toY, int promoChar, Board board)
 		board[BOARD_HEIGHT-1-k][0] = EmptySquare;
 	}
     }
-
 }
 
 /* Updates forwardMostMove */
 void
 MakeMove (int fromX, int fromY, int toX, int toY, int promoChar)
 {
+    int x = toX, y = toY;
+    char *s = parseList[forwardMostMove];
+    ChessSquare p = boards[forwardMostMove][toY][toX];
 //    forwardMostMove++; // [HGM] bare: moved downstream
 
+    if(killX >= 0 && killY >= 0) x = killX, y = killY; // [HGM] lion: make SAN move to intermediate square, if there is one
     (void) CoordsToAlgebraic(boards[forwardMostMove],
 			     PosFlags(forwardMostMove),
-			     fromY, fromX, toY, toX, promoChar,
-			     parseList[forwardMostMove]);
+			     fromY, fromX, y, x, promoChar,
+			     s);
+    if(killX >= 0 && killY >= 0)
+        sprintf(s + strlen(s), "%c%c%d", p == EmptySquare || toX == fromX && toY == fromY ? '-' : 'x', toX + AAA, toY + ONE - '0');
 
     if(serverMoves != NULL) { /* [HGM] write moves on file for broadcasting (should be separate routine, really) */
         int timeLeft; static int lastLoadFlag=0; int king, piece;
@@ -9778,7 +10325,7 @@ MakeMove (int fromX, int fromY, int toX, int toY, int promoChar)
       default:
 	break;
       case MT_CHECK:
-        if(gameInfo.variant != VariantShogi)
+        if(!IS_SHOGI(gameInfo.variant))
             strcat(parseList[forwardMostMove - 1], "+");
 	break;
       case MT_CHECKMATE:
@@ -9786,7 +10333,6 @@ MakeMove (int fromX, int fromY, int toX, int toY, int promoChar)
 	strcat(parseList[forwardMostMove - 1], "#");
 	break;
     }
-
 }
 
 /* Updates currentMove if not pausing */
@@ -9805,6 +10351,8 @@ ShowMove (int fromX, int fromY, int toX, int toY)
 	}
 	currentMove = forwardMostMove;
     }
+
+    killX = killY = -1; // [HGM] lion: used up
 
     if (instant) return;
 
@@ -9854,37 +10402,75 @@ SendEgtPath (ChessProgramState *cps)
 }
 
 static int
-NonStandardBoardSize ()
+NonStandardBoardSize (VariantClass v, int boardWidth, int boardHeight, int holdingsSize)
 {
-      /* [HGM] Awkward testing. Should really be a table */
-      int overruled = gameInfo.boardWidth != 8 || gameInfo.boardHeight != 8 || gameInfo.holdingsSize != 0;
-      if( gameInfo.variant == VariantXiangqi )
-           overruled = gameInfo.boardWidth != 9 || gameInfo.boardHeight != 10 || gameInfo.holdingsSize != 0;
-      if( gameInfo.variant == VariantShogi )
-           overruled = gameInfo.boardWidth != 9 || gameInfo.boardHeight != 9 || gameInfo.holdingsSize != 7;
-      if( gameInfo.variant == VariantBughouse || gameInfo.variant == VariantCrazyhouse )
-           overruled = gameInfo.boardWidth != 8 || gameInfo.boardHeight != 8 || gameInfo.holdingsSize != 5;
-      if( gameInfo.variant == VariantCapablanca || gameInfo.variant == VariantCapaRandom ||
-          gameInfo.variant == VariantGothic || gameInfo.variant == VariantFalcon || gameInfo.variant == VariantJanus )
-           overruled = gameInfo.boardWidth != 10 || gameInfo.boardHeight != 8 || gameInfo.holdingsSize != 0;
-      if( gameInfo.variant == VariantCourier )
-           overruled = gameInfo.boardWidth != 12 || gameInfo.boardHeight != 8 || gameInfo.holdingsSize != 0;
-      if( gameInfo.variant == VariantSuper )
-           overruled = gameInfo.boardWidth != 8 || gameInfo.boardHeight != 8 || gameInfo.holdingsSize != 8;
-      if( gameInfo.variant == VariantGreat )
-           overruled = gameInfo.boardWidth != 10 || gameInfo.boardHeight != 8 || gameInfo.holdingsSize != 8;
-      if( gameInfo.variant == VariantSChess )
-           overruled = gameInfo.boardWidth != 8 || gameInfo.boardHeight != 8 || gameInfo.holdingsSize != 7;
-      if( gameInfo.variant == VariantGrand )
-           overruled = gameInfo.boardWidth != 10 || gameInfo.boardHeight != 10 || gameInfo.holdingsSize != 7;
-      return overruled;
+      int width = 8, height = 8, holdings = 0;             // most common sizes
+      if( v == VariantUnknown || *engineVariant) return 0; // engine-defined name never needs prefix
+      // correct the deviations default for each variant
+      if( v == VariantXiangqi ) width = 9,  height = 10;
+      if( v == VariantShogi )   width = 9,  height = 9,  holdings = 7;
+      if( v == VariantBughouse || v == VariantCrazyhouse) holdings = 5;
+      if( v == VariantCapablanca || v == VariantCapaRandom ||
+          v == VariantGothic || v == VariantFalcon || v == VariantJanus )
+                                width = 10;
+      if( v == VariantCourier ) width = 12;
+      if( v == VariantSuper )                            holdings = 8;
+      if( v == VariantGreat )   width = 10,              holdings = 8;
+      if( v == VariantSChess )                           holdings = 7;
+      if( v == VariantGrand )   width = 10, height = 10, holdings = 7;
+      if( v == VariantChuChess) width = 10, height = 10;
+      if( v == VariantChu )     width = 12, height = 12;
+      return boardWidth >= 0   && boardWidth   != width  || // -1 is default,
+             boardHeight >= 0  && boardHeight  != height || // and thus by definition OK
+             holdingsSize >= 0 && holdingsSize != holdings;
+}
+
+char variantError[MSG_SIZ];
+
+char *
+SupportedVariant (char *list, VariantClass v, int boardWidth, int boardHeight, int holdingsSize, int proto, char *engine)
+{     // returns error message (recognizable by upper-case) if engine does not support the variant
+      char *p, *variant = VariantName(v);
+      static char b[MSG_SIZ];
+      if(NonStandardBoardSize(v, boardWidth, boardHeight, holdingsSize)) { /* [HGM] make prefix for non-standard board size. */
+	   snprintf(b, MSG_SIZ, "%dx%d+%d_%s", boardWidth, boardHeight,
+                                               holdingsSize, variant); // cook up sized variant name
+           /* [HGM] varsize: try first if this deviant size variant is specifically known */
+           if(StrStr(list, b) == NULL) {
+               // specific sized variant not known, check if general sizing allowed
+               if(proto != 1 && StrStr(list, "boardsize") == NULL) {
+                   snprintf(variantError, MSG_SIZ, "Board size %dx%d+%d not supported by %s",
+                            boardWidth, boardHeight, holdingsSize, engine);
+                   return NULL;
+               }
+               /* [HGM] here we really should compare with the maximum supported board size */
+           }
+      } else snprintf(b, MSG_SIZ,"%s", variant);
+      if(proto == 1) return b; // for protocol 1 we cannot check and hope for the best
+      p = StrStr(list, b);
+      while(p && (p != list && p[-1] != ',' || p[strlen(b)] && p[strlen(b)] != ',') ) p = StrStr(p+1, b);
+      if(p == NULL) {
+          // occurs not at all in list, or only as sub-string
+          snprintf(variantError, MSG_SIZ, _("Variant %s not supported by %s"), b, engine);
+          if(p = StrStr(list, b)) { // handle requesting parent variant when only size-overridden is supported
+              int l = strlen(variantError);
+              char *q;
+              while(p != list && p[-1] != ',') p--;
+              q = strchr(p, ',');
+              if(q) *q = NULLCHAR;
+              snprintf(variantError + l, MSG_SIZ - l,  _(", but %s is"), p);
+              if(q) *q= ',';
+          }
+          return NULL;
+      }
+      return b;
 }
 
 void
 InitChessProgram (ChessProgramState *cps, int setup)
 /* setup needed to setup FRC opening position */
 {
-    char buf[MSG_SIZ], b[MSG_SIZ];
+    char buf[MSG_SIZ], *b;
     if (appData.noChessProgram) return;
     hintRequested = FALSE;
     bookRequested = FALSE;
@@ -9902,37 +10488,32 @@ InitChessProgram (ChessProgramState *cps, int setup)
 	SendToProgram(buf, cps);
     }
 
+    setboardSpoiledMachineBlack = FALSE;
     SendToProgram(cps->initString, cps);
     if (gameInfo.variant != VariantNormal &&
 	gameInfo.variant != VariantLoadable
         /* [HGM] also send variant if board size non-standard */
-        || gameInfo.boardWidth != 8 || gameInfo.boardHeight != 8 || gameInfo.holdingsSize != 0
-                                            ) {
-      char *v = VariantName(gameInfo.variant);
-      if (cps->protocolVersion != 1 && StrStr(cps->variants, v) == NULL) {
-        /* [HGM] in protocol 1 we have to assume all variants valid */
-	snprintf(buf, MSG_SIZ, _("Variant %s not supported by %s"), v, cps->tidy);
-	DisplayFatalError(buf, 0, 1);
+        || gameInfo.boardWidth != 8 || gameInfo.boardHeight != 8 || gameInfo.holdingsSize != 0) {
+
+      b = SupportedVariant(cps->variants, gameInfo.variant, gameInfo.boardWidth,
+                           gameInfo.boardHeight, gameInfo.holdingsSize, cps->protocolVersion, cps->tidy);
+      if (b == NULL) {
+	VariantClass v;
+	char c, *q = cps->variants, *p = strchr(q, ',');
+	if(p) *p = NULLCHAR;
+	v = StringToVariant(q);
+	DisplayError(variantError, 0);
+	if(v != VariantUnknown && cps == &first) {
+	    int w, h, s;
+	    if(sscanf(q, "%dx%d+%d_%c", &w, &h, &s, &c) == 4) // get size overrides the engine needs with it (if any)
+		appData.NrFiles = w, appData.NrRanks = h, appData.holdingsSize = s, q = strchr(q, '_') + 1;
+	    ASSIGN(appData.variant, q);
+	    Reset(TRUE, FALSE);
+	}
+	if(p) *p = ',';
 	return;
       }
 
-      if(NonStandardBoardSize()) { /* [HGM] make prefix for non-standard board size. */
-	snprintf(b, MSG_SIZ, "%dx%d+%d_%s", gameInfo.boardWidth, gameInfo.boardHeight,
-		 gameInfo.holdingsSize, VariantName(gameInfo.variant)); // cook up sized variant name
-           /* [HGM] varsize: try first if this defiant size variant is specifically known */
-           if(StrStr(cps->variants, b) == NULL) {
-               // specific sized variant not known, check if general sizing allowed
-               if (cps->protocolVersion != 1) { // for protocol 1 we cannot check and hope for the best
-                   if(StrStr(cps->variants, "boardsize") == NULL) {
-		     snprintf(buf, MSG_SIZ, "Board size %dx%d+%d not supported by %s",
-                            gameInfo.boardWidth, gameInfo.boardHeight, gameInfo.holdingsSize, cps->tidy);
-                       DisplayFatalError(buf, 0, 1);
-                       return;
-                   }
-                   /* [HGM] here we really should compare with the maximum supported board size */
-               }
-           }
-      } else snprintf(b, MSG_SIZ,"%s", VariantName(gameInfo.variant));
       snprintf(buf, MSG_SIZ, "variant %s\n", b);
       SendToProgram(buf, cps);
     }
@@ -9972,7 +10553,7 @@ InitChessProgram (ChessProgramState *cps, int setup)
 	SendToProgram("easy\n", cps);
     }
     if (cps->usePing) {
-      snprintf(buf, MSG_SIZ, "ping %d\n", ++cps->lastPing);
+      snprintf(buf, MSG_SIZ, "ping %d\n", initPing = ++cps->lastPing);
       SendToProgram(buf, cps);
     }
     cps->initDone = TRUE;
@@ -10331,7 +10912,9 @@ SwapEngines (int n)
     SWAP(fenOverride, p)
     SWAP(NPS, h)
     SWAP(accumulateTC, h)
+    SWAP(drawDepth, h)
     SWAP(host, p)
+    SWAP(pseudo, h)
 }
 
 int
@@ -10612,7 +11195,7 @@ GameEnds (ChessMove result, char *resultDetails, int whosays)
 	      result, resultDetails ? resultDetails : "(null)", whosays);
     }
 
-    fromX = fromY = -1; // [HGM] abort any move the user is entering.
+    fromX = fromY = killX = killY = -1; // [HGM] abort any move the user is entering. // [HGM] lion
 
     if(pausing) PauseEvent(); // can happen when we abort a paused game (New Game or Quit)
 
@@ -10834,6 +11417,7 @@ GameEnds (ChessMove result, char *resultDetails, int whosays)
 		    PlayIcsUnfinishedSound();
 		}
 	    }
+	    if(appData.quitNext) { ExitEvent(0); return; }
 	} else if (gameMode == EditGame ||
 	           gameMode == PlayFromGameFile ||
 	           gameMode == AnalyzeMode ||
@@ -10881,8 +11465,7 @@ GameEnds (ChessMove result, char *resultDetails, int whosays)
 	    ExitAnalyzeMode();
             DoSleep( appData.delayBeforeQuit );
 	    SendToProgram("quit\n", &first);
-            DoSleep( appData.delayAfterQuit );
-	    DestroyChildProcess(first.pr, first.useSigterm);
+	    DestroyChildProcess(first.pr, 4 + first.useSigterm);
 	    first.reload = TRUE;
 	}
 	first.pr = NoProc;
@@ -10907,8 +11490,7 @@ GameEnds (ChessMove result, char *resultDetails, int whosays)
 	if (second.pr != NoProc) {
             DoSleep( appData.delayBeforeQuit );
 	    SendToProgram("quit\n", &second);
-            DoSleep( appData.delayAfterQuit );
-	    DestroyChildProcess(second.pr, second.useSigterm);
+	    DestroyChildProcess(second.pr, 4 + second.useSigterm);
 	    second.reload = TRUE;
 	}
 	second.pr = NoProc;
@@ -11010,7 +11592,8 @@ FeedMovesToProgram (ChessProgramState *cps, int upto)
     if(currentlyInitializedVariant != gameInfo.variant) {
       char buf[MSG_SIZ];
         // [HGM] variantswitch: make engine aware of new variant
-	if(cps->protocolVersion > 1 && StrStr(cps->variants, VariantName(gameInfo.variant)) == NULL)
+	if(!SupportedVariant(cps->variants, gameInfo.variant, gameInfo.boardWidth,
+                             gameInfo.boardHeight, gameInfo.holdingsSize, cps->protocolVersion, ""))
 		return; // [HGM] refrain from feeding moves altogether if variant is unsupported!
 	snprintf(buf, MSG_SIZ, "variant %s\n", VariantName(gameInfo.variant));
 	SendToProgram(buf, cps);
@@ -11077,6 +11660,8 @@ Reset (int redraw, int init)
 	fprintf(debugFP, "Reset(%d, %d) from gameMode %d\n",
 		redraw, init, gameMode);
     }
+    pieceDefs = FALSE; // [HGM] gen: reset engine-defined piece moves
+    for(i=0; i<EmptySquare; i++) { FREE(pieceDesc[i]); pieceDesc[i] = NULL; }
     CleanupTail(); // [HGM] vari: delete any stored variations
     CommentPopDown(); // [HGM] make sure no comments to the previous game keep hanging on
     pausing = pauseExamInvalid = FALSE;
@@ -11093,6 +11678,7 @@ Reset (int redraw, int init)
     lastHint[0] = NULLCHAR;
     ClearGameInfo(&gameInfo);
     gameInfo.variant = StringToVariant(appData.variant);
+    if(gameInfo.variant == VariantNormal && strcmp(appData.variant, "normal")) gameInfo.variant = VariantUnknown;
     ics_user_moved = ics_clock_paused = FALSE;
     ics_getting_history = H_FALSE;
     ics_gamenum = -1;
@@ -11106,6 +11692,7 @@ Reset (int redraw, int init)
     ClearPremoveHighlights();
     gotPremove = FALSE;
     alarmSounded = FALSE;
+    killX = killY = -1; // [HGM] lion
 
     GameEnds(EndOfFile, NULL, GE_PLAYER);
     if(appData.serverMovesName != NULL) {
@@ -11223,11 +11810,20 @@ AutoPlayOneMove ()
 	    SetHighlights(-1, -1, toX, toY);
 	}
     } else {
+        int viaX = moveList[currentMove][5] - AAA;
+        int viaY = moveList[currentMove][6] - ONE;
         fromX = moveList[currentMove][0] - AAA;
         fromY = moveList[currentMove][1] - ONE;
 
         HistorySet(parseList, backwardMostMove, forwardMostMove, currentMove); /* [AS] */
 
+        if(moveList[currentMove][4] == ';') { // multi-leg
+            ChessSquare piece = boards[currentMove][viaY][viaX];
+	    AnimateMove(boards[currentMove], fromX, fromY, viaX, viaY);
+            boards[currentMove][viaY][viaX] = boards[currentMove][fromY][fromX];
+            AnimateMove(boards[currentMove], fromX=viaX, fromY=viaY, toX, toY);
+            boards[currentMove][viaY][viaX] = piece;
+        } else
 	AnimateMove(boards[currentMove], fromX, fromY, toX, toY);
 
 	if (appData.highlightLastMove) {
@@ -11286,6 +11882,7 @@ LoadGameOneMove (ChessMove readAhead)
       case WhiteNonPromotion:
       case BlackNonPromotion:
       case NormalMove:
+      case FirstLeg:
       case WhiteKingSideCastle:
       case WhiteQueenSideCastle:
       case BlackKingSideCastle:
@@ -11307,6 +11904,7 @@ LoadGameOneMove (ChessMove readAhead)
         toX = currentMoveString[2] - AAA;
         toY = currentMoveString[3] - ONE;
 	promoChar = currentMoveString[4];
+	if(promoChar == ';') promoChar = NULLCHAR;
 	break;
 
       case WhiteDrop:
@@ -11473,6 +12071,7 @@ LoadGameOneMove (ChessMove readAhead)
 
 	thinkOutput[0] = NULLCHAR;
 	MakeMove(fromX, fromY, toX, toY, promoChar);
+	killX = killY = -1; // [HGM] lion: used up
 	currentMove = forwardMostMove;
 	return TRUE;
     }
@@ -11719,22 +12318,40 @@ void
 PackMove (int fromX, int fromY, int toX, int toY, ChessSquare promoPiece)
 {
     int sq = fromX + (fromY<<4);
-    int piece = quickBoard[sq];
+    int piece = quickBoard[sq], rook;
     quickBoard[sq] = 0;
     moveDatabase[movePtr].to = pieceList[piece] = sq = toX + (toY<<4);
-    if(piece == pieceList[1] && fromY == toY && (toX > fromX+1 || toX < fromX-1) && fromX != BOARD_LEFT && fromX != BOARD_RGHT-1) {
+    if(piece == pieceList[1] && fromY == toY) {
+      if((toX > fromX+1 || toX < fromX-1) && fromX != BOARD_LEFT && fromX != BOARD_RGHT-1) {
 	int from = toX>fromX ? BOARD_RGHT-1 : BOARD_LEFT;
 	moveDatabase[movePtr++].piece = Q_WCASTL;
 	quickBoard[sq] = piece;
 	piece = quickBoard[from]; quickBoard[from] = 0;
 	moveDatabase[movePtr].to = pieceList[piece] = sq = toX>fromX ? sq-1 : sq+1;
+      } else if((rook = quickBoard[sq]) && pieceType[rook] == WhiteRook) { // FRC castling
+	quickBoard[sq] = 0; // remove Rook
+	moveDatabase[movePtr].to = sq = (toX>fromX ? BOARD_RGHT-2 : BOARD_LEFT+2); // King to-square
+	moveDatabase[movePtr++].piece = Q_WCASTL;
+	quickBoard[sq] = pieceList[1]; // put King
+	piece = rook;
+	moveDatabase[movePtr].to = pieceList[rook] = sq = toX>fromX ? sq-1 : sq+1;
+      }
     } else
-    if(piece == pieceList[2] && fromY == toY && (toX > fromX+1 || toX < fromX-1) && fromX != BOARD_LEFT && fromX != BOARD_RGHT-1) {
+    if(piece == pieceList[2] && fromY == toY) {
+      if((toX > fromX+1 || toX < fromX-1) && fromX != BOARD_LEFT && fromX != BOARD_RGHT-1) {
 	int from = (toX>fromX ? BOARD_RGHT-1 : BOARD_LEFT) + (BOARD_HEIGHT-1 <<4);
 	moveDatabase[movePtr++].piece = Q_BCASTL;
 	quickBoard[sq] = piece;
 	piece = quickBoard[from]; quickBoard[from] = 0;
 	moveDatabase[movePtr].to = pieceList[piece] = sq = toX>fromX ? sq-1 : sq+1;
+      } else if((rook = quickBoard[sq]) && pieceType[rook] == BlackRook) { // FRC castling
+	quickBoard[sq] = 0; // remove Rook
+	moveDatabase[movePtr].to = sq = (toX>fromX ? BOARD_RGHT-2 : BOARD_LEFT+2);
+	moveDatabase[movePtr++].piece = Q_BCASTL;
+	quickBoard[sq] = pieceList[2]; // put King
+	piece = rook;
+	moveDatabase[movePtr].to = pieceList[rook] = sq = toX>fromX ? sq-1 : sq+1;
+      }
     } else
     if(epOK && (pieceType[piece] == WhitePawn || pieceType[piece] == BlackPawn) && fromX != toX && quickBoard[sq] == 0) {
 	quickBoard[(fromY<<4)+toX] = 0;
@@ -11814,12 +12431,26 @@ QuickCompare (Board board, int *minCounts, int *maxCounts)
 int
 QuickScan (Board board, Move *move)
 {   // reconstruct game,and compare all positions in it
-    int cnt=0, stretch=0, total = MakePieceList(board, counts);
+    int cnt=0, stretch=0, found = -1, total = MakePieceList(board, counts);
     do {
 	int piece = move->piece;
 	int to = move->to, from = pieceList[piece];
+	if(found < 0) { // if already found just scan to game end for final piece count
+	  if(QuickCompare(soughtBoard, minSought, maxSought) ||
+	   appData.ignoreColors && QuickCompare(reverseBoard, minReverse, maxReverse) ||
+	   flipSearch && (QuickCompare(flipBoard, minSought, maxSought) ||
+				appData.ignoreColors && QuickCompare(rotateBoard, minReverse, maxReverse))
+	    ) {
+	    static int lastCounts[EmptySquare+1];
+	    int i;
+	    if(stretch) for(i=0; i<EmptySquare; i++) if(lastCounts[i] != counts[i]) { stretch = 0; break; } // reset if material changes
+	    if(stretch++ == 0) for(i=0; i<EmptySquare; i++) lastCounts[i] = counts[i]; // remember actual material
+	  } else stretch = 0;
+	  if(stretch && (appData.searchMode == 1 || stretch >= appData.stretch)) found = cnt + 1 - stretch;
+	  if(found >= 0 && !appData.minPieces) return found;
+	}
 	if(piece <= Q_PROMO) { // special moves encoded by otherwise invalid piece numbers 1-4
-	  if(!piece) return -1;
+	  if(!piece) return (appData.minPieces && (total < appData.minPieces || total > appData.maxPieces) ? -1 : found);
 	  if(piece == Q_PROMO) { // promotion, encoded as (Q_PROMO, to) + (piece, promoType)
 	    piece = (++move)->piece;
 	    from = pieceList[piece];
@@ -11844,23 +12475,12 @@ QuickScan (Board board, Move *move)
 	  }
 	}
 	if(appData.searchMode > 2) counts[pieceType[quickBoard[to]]]--; // account capture
-	if((total -= (quickBoard[to] != 0)) < soughtTotal) return -1; // piece count dropped below what we search for
+	if((total -= (quickBoard[to] != 0)) < soughtTotal && found < 0) return -1; // piece count dropped below what we search for
 	quickBoard[from] = 0;
       aftercastle:
 	quickBoard[to] = piece;
 	pieceList[piece] = to;
 	cnt++; turn ^= 3;
-	if(QuickCompare(soughtBoard, minSought, maxSought) ||
-	   appData.ignoreColors && QuickCompare(reverseBoard, minReverse, maxReverse) ||
-	   flipSearch && (QuickCompare(flipBoard, minSought, maxSought) ||
-				appData.ignoreColors && QuickCompare(rotateBoard, minReverse, maxReverse))
-	  ) {
-	    static int lastCounts[EmptySquare+1];
-	    int i;
-	    if(stretch) for(i=0; i<EmptySquare; i++) if(lastCounts[i] != counts[i]) { stretch = 0; break; } // reset if material changes
-	    if(stretch++ == 0) for(i=0; i<EmptySquare; i++) lastCounts[i] = counts[i]; // remember actual material
-	} else stretch = 0;
-	if(stretch && (appData.searchMode == 1 || stretch >= appData.stretch)) return cnt + 1 - stretch;
 	move++;
     } while(1);
 }
@@ -11926,7 +12546,7 @@ GameContainsPosition (FILE *f, ListGame *lg)
 	for(next = WhitePawn; next<EmptySquare; next++) keys[next] = random()>>8 ^ random()<<6 ^random()<<20;
 	initDone = TRUE;
     }
-    if(lg->gameInfo.fen) ParseFEN(boards[scratch], &btm, lg->gameInfo.fen);
+    if(lg->gameInfo.fen) ParseFEN(boards[scratch], &btm, lg->gameInfo.fen, FALSE);
     else CopyBoard(boards[scratch], initialPosition); // default start position
     if(lg->moves) {
 	turn = btm + 1;
@@ -11970,6 +12590,7 @@ GameContainsPosition (FILE *f, ListGame *lg)
 	    case WhiteNonPromotion:
 	    case BlackNonPromotion:
 	    case NormalMove:
+	    case FirstLeg:
 	    case WhiteKingSideCastle:
 	    case WhiteQueenSideCastle:
 	    case BlackKingSideCastle:
@@ -12034,6 +12655,7 @@ LoadGame (FILE *f, int gameNumber, char *title, int useList)
     if (gameMode != BeginningOfGame) {
       Reset(FALSE, TRUE);
     }
+    killX = killY = -1; // [HGM] lion: in case we did not Reset
 
     gameFileFP = f;
     if (lastLoadGameFP != NULL && lastLoadGameFP != f) {
@@ -12187,6 +12809,7 @@ LoadGame (FILE *f, int gameNumber, char *title, int useList)
 	    break;
 
 	  case NormalMove:
+	  case FirstLeg:
 	    /* Only a NormalMove can be at the start of a game
 	     * without a position diagram. */
 	    if (lastLoadGameStart == EndOfFile ) {
@@ -12235,7 +12858,7 @@ LoadGame (FILE *f, int gameNumber, char *title, int useList)
 	if (!err) numPGNTags++;
 
         /* [HGM] PGNvariant: automatically switch to variant given in PGN tag */
-        if(gameInfo.variant != oldVariant) {
+        if(gameInfo.variant != oldVariant && (gameInfo.variant != VariantNormal || gameInfo.variantName == NULL || *gameInfo.variantName == NULLCHAR)) {
             startedFromPositionFile = FALSE; /* [HGM] loadPos: variant switch likely makes position invalid */
 	    ResetFrontEnd(); // [HGM] might need other bitmaps. Cannot use Reset() because it clears gameInfo :-(
 	    InitPosition(TRUE);
@@ -12248,12 +12871,14 @@ LoadGame (FILE *f, int gameNumber, char *title, int useList)
 	if (gameInfo.fen != NULL) {
 	  Board initial_position;
 	  startedFromSetupPosition = TRUE;
-	  if (!ParseFEN(initial_position, &blackPlaysFirst, gameInfo.fen)) {
+	  if (!ParseFEN(initial_position, &blackPlaysFirst, gameInfo.fen, TRUE)) {
 	    Reset(TRUE, TRUE);
 	    DisplayError(_("Bad FEN position in file"), 0);
 	    return FALSE;
 	  }
 	  CopyBoard(boards[0], initial_position);
+	  if(*engineVariant) // [HGM] for now, assume FEN in engine-defined variant game is default initial position
+	    CopyBoard(initialPosition, initial_position);
 	  if (blackPlaysFirst) {
 	    currentMove = forwardMostMove = backwardMostMove = 1;
 	    CopyBoard(boards[1], initial_position);
@@ -12454,6 +13079,15 @@ LoadGame (FILE *f, int gameNumber, char *title, int useList)
       AnalyzeFileEvent();
     }
 
+    if(gameInfo.result == GameUnfinished && gameInfo.resultDetails && appData.clockMode) {
+	long int w, b; // [HGM] adjourn: restore saved clock times
+	char *p = strstr(gameInfo.resultDetails, "(Clocks:");
+	if(p && sscanf(p+8, "%ld,%ld", &w, &b) == 2) {
+	    timeRemaining[0][forwardMostMove] = whiteTimeRemaining = 1000*w + 500;
+	    timeRemaining[1][forwardMostMove] = blackTimeRemaining = 1000*b + 500;
+	}
+    }
+
     if(creatingBook) return TRUE;
     if (!matchMode && pos > 0) {
 	ToNrEvent(pos); // [HGM] no autoplay if selected on position
@@ -12576,7 +13210,7 @@ LoadPosition (FILE *f, int positionNumber, char *title)
     }
 
     if (fenMode) {
-	if (!ParseFEN(initial_position, &blackPlaysFirst, line)) {
+	if (!ParseFEN(initial_position, &blackPlaysFirst, line, TRUE)) {
 	    DisplayError(_("Bad FEN position in file"), 0);
 	    return FALSE;
 	}
@@ -12801,9 +13435,9 @@ GetOutOfBookInfo (char * buf)
     }
 }
 
-/* Save game in PGN style and close the file */
-int
-SaveGamePGN (FILE *f)
+/* Save game in PGN style */
+static void
+SaveGamePGN2 (FILE *f)
 {
     int i, offset, linelen, newblock;
 //    char *movetext;
@@ -12818,7 +13452,7 @@ SaveGamePGN (FILE *f)
     if(appData.numberTag && matchMode) fprintf(f, "[Number \"%d\"]\n", nextGame+1); // [HGM] number tag
 
     if (backwardMostMove > 0 || startedFromSetupPosition) {
-        char *fen = PositionToFEN(backwardMostMove, NULL);
+        char *fen = PositionToFEN(backwardMostMove, NULL, 1);
         fprintf(f, "[FEN \"%s\"]\n[SetUp \"1\"]\n", fen);
 	fprintf(f, "\n{--------------\n");
 	PrintPosition(f, backwardMostMove);
@@ -12955,12 +13589,21 @@ SaveGamePGN (FILE *f)
     /* Print result */
     if (gameInfo.resultDetails != NULL &&
 	gameInfo.resultDetails[0] != NULLCHAR) {
-	fprintf(f, "{%s} %s\n\n", gameInfo.resultDetails,
-		PGNResult(gameInfo.result));
+	char buf[MSG_SIZ], *p = gameInfo.resultDetails;
+	if(gameInfo.result == GameUnfinished && appData.clockMode &&
+	   (gameMode == MachinePlaysWhite || gameMode == MachinePlaysBlack || gameMode == TwoMachinesPlay)) // [HGM] adjourn: save clock settings
+	    snprintf(buf, MSG_SIZ, "%s (Clocks: %ld, %ld)", p, whiteTimeRemaining/1000, blackTimeRemaining/1000), p = buf;
+	fprintf(f, "{%s} %s\n\n", p, PGNResult(gameInfo.result));
     } else {
 	fprintf(f, "%s\n\n", PGNResult(gameInfo.result));
     }
+}
 
+/* Save game in PGN style and close the file */
+int
+SaveGamePGN (FILE *f)
+{
+    SaveGamePGN2(f);
     fclose(f);
     lastSavedGame = GameCheckSum(); // [HGM] save: remember ID of last saved game to prevent double saving
     return TRUE;
@@ -13087,7 +13730,7 @@ SavePosition (FILE *f, int dummy, char *dummy2)
 	PrintPosition(f, currentMove);
 	fprintf(f, "--------------]\n");
     } else {
-	fen = PositionToFEN(currentMove, NULL);
+	fen = PositionToFEN(currentMove, NULL, 1);
 	fprintf(f, "%s\n", fen);
 	free(fen);
     }
@@ -13439,6 +14082,7 @@ ExitEvent (int status)
       return;
     }
 
+    if (appData.icsActive) printf("\n"); // [HGM] end on new line after closing XBoard
     if (appData.icsActive && appData.colorize) Colorize(ColorNone, FALSE);
 
     if (telnetISR != NULL) {
@@ -13465,14 +14109,12 @@ ExitEvent (int status)
 
         DoSleep( appData.delayBeforeQuit );
 	SendToProgram("quit\n", &first);
-        DoSleep( appData.delayAfterQuit );
-	DestroyChildProcess(first.pr, 10 /* [AS] first.useSigterm */ );
+	DestroyChildProcess(first.pr, 4 + first.useSigterm /* [AS] first.useSigterm */ );
     }
     if (second.pr != NoProc) {
         DoSleep( appData.delayBeforeQuit );
 	SendToProgram("quit\n", &second);
-        DoSleep( appData.delayAfterQuit );
-	DestroyChildProcess(second.pr, 10 /* [AS] second.useSigterm */ );
+	DestroyChildProcess(second.pr, 4 + second.useSigterm /* [AS] second.useSigterm */ );
     }
     if (first.isr != NULL) {
 	RemoveInputSource(first.isr);
@@ -13703,7 +14345,10 @@ AnalyzeModeEvent ()
 	first.maybeThinking = FALSE; /* avoid killing GNU Chess */
 	EngineOutputPopUp();
     }
-    if (!appData.icsEngineAnalyze) gameMode = AnalyzeMode;
+    if (!appData.icsEngineAnalyze) {
+	gameMode = AnalyzeMode;
+	ClearEngineOutputPane(0); // [TK] exclude: to print exclusion/multipv header
+    }
     pausing = FALSE;
     ModeHighlight();
     SetGameInfo();
@@ -13989,7 +14634,7 @@ TwoMachinesEvent P((void))
       case MachinePlaysWhite:
       case MachinePlaysBlack:
 	if (WhiteOnMove(forwardMostMove) == (gameMode == MachinePlaysWhite)) {
-	    DisplayError(_("Wait until your turn,\nor select Move Now"), 0);
+	    DisplayError(_("Wait until your turn,\nor select 'Move Now'."), 0);
 	    return;
 	}
 	/* fall through */
@@ -14024,9 +14669,12 @@ TwoMachinesEvent P((void))
     }
     if(WaitForEngine(&second, TwoMachinesEventIfReady)) return; // (if needed:) started up second engine, so wait for features
 
-    if(second.protocolVersion >= 2 && !strstr(second.variants, VariantName(gameInfo.variant))) {
-	startingEngine = FALSE;
+    if(!SupportedVariant(second.variants, gameInfo.variant, gameInfo.boardWidth,
+                         gameInfo.boardHeight, gameInfo.holdingsSize, second.protocolVersion, second.tidy)) {
+	startingEngine = matchMode = FALSE;
 	DisplayError("second engine does not play this", 0);
+	gameMode = TwoMachinesPlay; ModeHighlight(); // Needed to make sure menu item is unchecked
+	EditGameEvent(); // switch back to EditGame mode
 	return;
     }
 
@@ -14426,11 +15074,17 @@ EditPositionMenuEvent (ChessSquare selection, int x, int y)
 {
     char buf[MSG_SIZ];
     ChessSquare piece = boards[0][y][x];
+    static Board erasedBoard, currentBoard, menuBoard, nullBoard;
+    static int lastVariant;
 
     if (gameMode != EditPosition && gameMode != IcsExamining) return;
 
     switch (selection) {
       case ClearBoard:
+	fromX = fromY = killX = killY = -1; // [HGM] abort any move entry in progress
+	MarkTargetSquares(1);
+	CopyBoard(currentBoard, boards[0]);
+	CopyBoard(menuBoard, initialPosition);
 	if (gameMode == IcsExamining && ics_type == ICS_FICS) {
 	    SendToICS(ics_prefix);
 	    SendToICS("bsetup clear\n");
@@ -14438,6 +15092,7 @@ EditPositionMenuEvent (ChessSquare selection, int x, int y)
 	    SendToICS(ics_prefix);
 	    SendToICS("clearboard\n");
 	} else {
+            int nonEmpty = 0;
             for (x = 0; x < BOARD_WIDTH; x++) { ChessSquare p = EmptySquare;
 		if(x == BOARD_LEFT-1 || x == BOARD_RGHT) p = (ChessSquare) 0; /* [HGM] holdings */
                 for (y = 0; y < BOARD_HEIGHT; y++) {
@@ -14448,9 +15103,33 @@ EditPositionMenuEvent (ChessSquare selection, int x, int y)
 			    SendToICS(buf);
 			}
 		    } else {
+			if(boards[0][y][x] != p) nonEmpty++;
 			boards[0][y][x] = p;
 		    }
 		}
+	    }
+	    if(gameMode != IcsExamining) { // [HGM] editpos: cycle trough boards
+		int r;
+		for(r = 0; r < BOARD_HEIGHT; r++) {
+		  for(x = BOARD_LEFT; x < BOARD_RGHT; x++) { // create 'menu board' by removing duplicates 
+		    ChessSquare p = menuBoard[r][x];
+		    for(y = x + 1; y < BOARD_RGHT; y++) if(menuBoard[r][y] == p) menuBoard[r][y] = EmptySquare;
+		  }
+		}
+		DisplayMessage("Clicking clock again restores position", "");
+		if(gameInfo.variant != lastVariant) lastVariant = gameInfo.variant, CopyBoard(erasedBoard, boards[0]);
+		if(!nonEmpty) { // asked to clear an empty board
+		    CopyBoard(boards[0], menuBoard);
+		} else
+		if(CompareBoards(currentBoard, menuBoard)) { // asked to clear an empty board
+		    CopyBoard(boards[0], initialPosition);
+		} else
+		if(CompareBoards(currentBoard, initialPosition) && !CompareBoards(currentBoard, erasedBoard)
+								 && !CompareBoards(nullBoard, erasedBoard)) {
+		    CopyBoard(boards[0], erasedBoard);
+		} else
+		    CopyBoard(erasedBoard, currentBoard);
+
 	    }
 	}
 	if (gameMode == EditPosition) {
@@ -14508,6 +15187,7 @@ EditPositionMenuEvent (ChessSquare selection, int x, int y)
         if(gameInfo.variant == VariantShatranj ||
            gameInfo.variant == VariantXiangqi  ||
            gameInfo.variant == VariantCourier  ||
+           gameInfo.variant == VariantASEAN    ||
            gameInfo.variant == VariantMakruk     )
             selection = (ChessSquare)((int)selection - (int)WhiteQueen + (int)WhiteFerz);
         goto defaultlabel;
@@ -14696,7 +15376,8 @@ ClockClick (int which)
 	  if (gameMode == EditPosition || gameMode == IcsExamining) {
 	    if(!appData.pieceMenu && blackPlaysFirst) EditPositionMenuEvent(ClearBoard, 0, 0);
 	    SetBlackToPlayEvent();
-	  } else if ((gameMode == AnalyzeMode || gameMode == EditGame) && !blackFlag && WhiteOnMove(currentMove)) {
+	  } else if ((gameMode == AnalyzeMode || gameMode == EditGame ||
+		      gameMode == MachinePlaysBlack && PosFlags(0) & F_NULL_MOVE && !blackFlag && !shiftKey) && WhiteOnMove(currentMove)) {
           UserMoveEvent((int)EmptySquare, DROP_RANK, 0, 0, 0); // [HGM] multi-move: if not out of time, enters null move
 	  } else if (shiftKey) {
 	    AdjustClock(which, -1);
@@ -14708,7 +15389,8 @@ ClockClick (int which)
 	  if (gameMode == EditPosition || gameMode == IcsExamining) {
 	    if(!appData.pieceMenu && !blackPlaysFirst) EditPositionMenuEvent(ClearBoard, 0, 0);
 	    SetWhiteToPlayEvent();
-	  } else if ((gameMode == AnalyzeMode || gameMode == EditGame) && !whiteFlag && !WhiteOnMove(currentMove)) {
+	  } else if ((gameMode == AnalyzeMode || gameMode == EditGame ||
+		      gameMode == MachinePlaysWhite && PosFlags(0) & F_NULL_MOVE && !whiteFlag && !shiftKey) && !WhiteOnMove(currentMove)) {
           UserMoveEvent((int)EmptySquare, DROP_RANK, 0, 0, 0); // [HGM] multi-move
 	  } else if (shiftKey) {
 	    AdjustClock(which, -1);
@@ -14852,6 +15534,7 @@ ForwardInner (int target)
 
     seekGraphUp = FALSE;
     MarkTargetSquares(1);
+    fromX = fromY = killX = killY = -1; // [HGM] abort any move entry in progress
 
     if (gameMode == PlayFromGameFile && !pausing)
       PauseEvent();
@@ -14872,9 +15555,18 @@ ForwardInner (int target)
 		SetHighlights(-1, -1, toX, toY);
 	    }
 	} else {
+            int viaX = moveList[target - 1][5] - AAA;
+            int viaY = moveList[target - 1][6] - ONE;
             fromX = moveList[target - 1][0] - AAA;
             fromY = moveList[target - 1][1] - ONE;
 	    if (target == currentMove + 1) {
+		if(moveList[target - 1][4] == ';') { // multi-leg
+		    ChessSquare piece = boards[currentMove][viaY][viaX];
+		    AnimateMove(boards[currentMove], fromX, fromY, viaX, viaY);
+		    boards[currentMove][viaY][viaX] = boards[currentMove][fromY][fromX];
+		    AnimateMove(boards[currentMove], viaX, viaY, toX, toY);
+		    boards[currentMove][viaY][viaX] = piece;
+		} else
 		AnimateMove(boards[currentMove], fromX, fromY, toX, toY);
 	    }
 	    if (appData.highlightLastMove) {
@@ -14961,6 +15653,7 @@ BackwardInner (int target)
     if (gameMode == EditPosition) return;
     seekGraphUp = FALSE;
     MarkTargetSquares(1);
+    fromX = fromY = killX = killY = -1; // [HGM] abort any move entry in progress
     if (currentMove <= backwardMostMove) {
 	ClearHighlights();
 	DrawPosition(full_redraw, boards[currentMove]);
@@ -15103,7 +15796,7 @@ RetractMoveEvent ()
       case MachinePlaysWhite:
       case MachinePlaysBlack:
 	if (WhiteOnMove(forwardMostMove) == (gameMode == MachinePlaysWhite)) {
-	    DisplayError(_("Wait until your turn,\nor select Move Now"), 0);
+	    DisplayError(_("Wait until your turn,\nor select 'Move Now'."), 0);
 	    return;
 	}
 	if (forwardMostMove < 2) return;
@@ -15201,14 +15894,14 @@ HintEvent ()
     switch (gameMode) {
       case MachinePlaysWhite:
 	if (WhiteOnMove(forwardMostMove)) {
-	    DisplayError(_("Wait until your turn"), 0);
+	    DisplayError(_("Wait until your turn."), 0);
 	    return;
 	}
 	break;
       case BeginningOfGame:
       case MachinePlaysBlack:
 	if (!WhiteOnMove(forwardMostMove)) {
-	    DisplayError(_("Wait until your turn"), 0);
+	    DisplayError(_("Wait until your turn."), 0);
 	    return;
 	}
 	break;
@@ -15220,11 +15913,41 @@ HintEvent ()
     hintRequested = TRUE;
 }
 
+int
+SaveSelected (FILE *g, int dummy, char *dummy2)
+{
+    ListGame * lg = (ListGame *) gameList.head;
+    int nItem, cnt=0;
+    FILE *f;
+
+    if( !(f = GameFile()) || ((ListGame *) gameList.tailPred)->number <= 0 ) {
+        DisplayError(_("Game list not loaded or empty"), 0);
+        return 0;
+    }
+
+    creatingBook = TRUE; // suppresses stuff during load game
+
+    /* Get list size */
+    for (nItem = 1; nItem <= ((ListGame *) gameList.tailPred)->number; nItem++){
+	if(lg->position >= 0) { // selected?
+	    LoadGame(f, nItem, "", TRUE);
+	    SaveGamePGN2(g); // leaves g open
+	    cnt++; DoEvents();
+	}
+        lg = (ListGame *) lg->node.succ;
+    }
+
+    fclose(g);
+    creatingBook = FALSE;
+
+    return cnt;
+}
+
 void
 CreateBookEvent ()
 {
     ListGame * lg = (ListGame *) gameList.head;
-    FILE *f;
+    FILE *f, *g;
     int nItem;
     static int secondTime = FALSE;
 
@@ -15233,8 +15956,8 @@ CreateBookEvent ()
         return;
     }
 
-    if(!secondTime && (f = fopen(appData.polyglotBook, "r"))) {
-        fclose(f);
+    if(!secondTime && (g = fopen(appData.polyglotBook, "r"))) {
+        fclose(g);
 	secondTime++;
 	DisplayNote(_("Book file exists! Try again for overwrite."));
 	return;
@@ -15245,8 +15968,11 @@ CreateBookEvent ()
 
     /* Get list size */
     for (nItem = 1; nItem <= ((ListGame *) gameList.tailPred)->number; nItem++){
-	LoadGame(f, nItem, "", TRUE);
-	AddGameToBook(TRUE);
+	if(lg->position >= 0) {
+	    LoadGame(f, nItem, "", TRUE);
+	    AddGameToBook(TRUE);
+	    DoEvents();
+	}
         lg = (ListGame *) lg->node.succ;
     }
 
@@ -15261,14 +15987,14 @@ BookEvent ()
     switch (gameMode) {
       case MachinePlaysWhite:
 	if (WhiteOnMove(forwardMostMove)) {
-	    DisplayError(_("Wait until your turn"), 0);
+	    DisplayError(_("Wait until your turn."), 0);
 	    return;
 	}
 	break;
       case BeginningOfGame:
       case MachinePlaysBlack:
 	if (!WhiteOnMove(forwardMostMove)) {
-	    DisplayError(_("Wait until your turn"), 0);
+	    DisplayError(_("Wait until your turn."), 0);
 	    return;
 	}
 	break;
@@ -15932,6 +16658,31 @@ SendTimeRemaining (ChessProgramState *cps, int machineWhite)
     SendToProgram(message, cps);
 }
 
+char *
+EngineDefinedVariant (ChessProgramState *cps, int n)
+{   // return name of n-th unknown variant that engine supports
+    static char buf[MSG_SIZ];
+    char *p, *s = cps->variants;
+    if(!s) return NULL;
+    do { // parse string from variants feature
+      VariantClass v;
+	p = strchr(s, ',');
+	if(p) *p = NULLCHAR;
+      v = StringToVariant(s);
+      if(v == VariantNormal && strcmp(s, "normal") && !strstr(s, "_normal")) v = VariantUnknown; // garbage is recognized as normal
+	if(v == VariantUnknown) { // non-standard variant in list of engine-supported variants
+	    if(!strcmp(s, "tenjiku") || !strcmp(s, "dai") || !strcmp(s, "dada") || // ignore Alien-Edition variants
+	       !strcmp(s, "maka") || !strcmp(s, "tai") || !strcmp(s, "kyoku") ||
+	       !strcmp(s, "checkers") || !strcmp(s, "go") || !strcmp(s, "reversi") ||
+	       !strcmp(s, "dark") || !strcmp(s, "alien") || !strcmp(s, "multi") || !strcmp(s, "amazons") ) n++;
+	    if(--n < 0) safeStrCpy(buf, s, MSG_SIZ);
+	}
+	if(p) *p++ = ',';
+	if(n < 0) return buf;
+    } while(s = p);
+    return NULL;
+}
+
 int
 BoolFeature (char **p, char *name, int *loc, ChessProgramState *cps)
 {
@@ -16146,6 +16897,7 @@ ParseFeatures (char *args, ChessProgramState *cps)
     /* End of additions by Tord */
 
     /* [HGM] added features: */
+    if (BoolFeature(&p, "highlight", &cps->highlight, cps)) continue;
     if (BoolFeature(&p, "debug", &cps->debug, cps)) continue;
     if (BoolFeature(&p, "nps", &cps->supportsNPS, cps)) continue;
     if (IntFeature(&p, "level", &cps->maxNrOfSessions, cps)) continue;
@@ -16299,7 +17051,7 @@ TypeInDoneEvent (char *move)
 	ChessMove moveType;
 
 	// [HGM] FENedit
-	if(gameMode == EditPosition && ParseFEN(board, &n, move) ) {
+	if(gameMode == EditPosition && ParseFEN(board, &n, move, TRUE) ) {
 		EditPositionPasteFEN(move);
 		return;
 	}
@@ -17001,7 +17753,7 @@ PGNDate ()
 
 
 char *
-PositionToFEN (int move, char *overrideCastling)
+PositionToFEN (int move, char *overrideCastling, int moveCounts)
 {
     int i, j, fromX, fromY, toX, toY;
     int whiteToPlay;
@@ -17031,12 +17783,12 @@ PositionToFEN (int move, char *overrideCastling)
                 if(PieceToChar(piece) == '+') {
                     /* [HGM] write promoted pieces as '+<unpromoted>' (Shogi) */
                     *p++ = '+';
-                    piece = (ChessSquare)(DEMOTED piece);
+                    piece = (ChessSquare)(CHUDEMOTED piece);
                 }
-                *p++ = PieceToChar(piece);
+                *p++ = (piece == DarkSquare ? '*' : PieceToChar(piece));
                 if(p[-1] == '~') {
                     /* [HGM] flag promoted pieces as '<promoted>~' (Crazyhouse) */
-                    p[-1] = PieceToChar((ChessSquare)(DEMOTED piece));
+                    p[-1] = PieceToChar((ChessSquare)(CHUDEMOTED piece));
                     *p++ = '~';
                 }
 	    }
@@ -17081,8 +17833,17 @@ PositionToFEN (int move, char *overrideCastling)
     while(*p++ = *q++); if(q != overrideCastling+1) p[-1] = ' '; else --p;
   } else {
   if(nrCastlingRights) {
+     int handW=0, handB=0;
+     if(gameInfo.variant == VariantSChess) { // for S-Chess, all virgin backrank pieces must be listed
+	for(i=0; i<BOARD_HEIGHT; i++) handW += boards[move][i][BOARD_RGHT]; // count white held pieces
+	for(i=0; i<BOARD_HEIGHT; i++) handB += boards[move][i][BOARD_LEFT-1]; // count black held pieces
+     }
      q = p;
-     if(gameInfo.variant == VariantFischeRandom || gameInfo.variant == VariantCapaRandom) {
+     if(appData.fischerCastling) {
+	if(handW) { // in shuffle S-Chess simply dump all virgin pieces
+           for(i=BOARD_RGHT-1; i>=BOARD_LEFT; i--)
+               if(boards[move][VIRGIN][i] & VIRGIN_W) *p++ = i + AAA + 'A' - 'a';
+	} else {
        /* [HGM] write directly from rights */
            if(boards[move][CASTLING][2] != NoRights &&
               boards[move][CASTLING][0] != NoRights   )
@@ -17090,12 +17851,18 @@ PositionToFEN (int move, char *overrideCastling)
            if(boards[move][CASTLING][2] != NoRights &&
               boards[move][CASTLING][1] != NoRights   )
                 *p++ = boards[move][CASTLING][1] + AAA + 'A' - 'a';
+	}
+	if(handB) {
+           for(i=BOARD_RGHT-1; i>=BOARD_LEFT; i--)
+               if(boards[move][VIRGIN][i] & VIRGIN_B) *p++ = i + AAA;
+	} else {
            if(boards[move][CASTLING][5] != NoRights &&
               boards[move][CASTLING][3] != NoRights   )
                 *p++ = boards[move][CASTLING][3] + AAA;
            if(boards[move][CASTLING][5] != NoRights &&
               boards[move][CASTLING][4] != NoRights   )
                 *p++ = boards[move][CASTLING][4] + AAA;
+	}
      } else {
 
         /* [HGM] write true castling rights */
@@ -17105,9 +17872,8 @@ PositionToFEN (int move, char *overrideCastling)
                boards[move][CASTLING][2] != NoRights  ) k = 1, *p++ = 'K';
             q = (boards[move][CASTLING][1] == BOARD_LEFT &&
                  boards[move][CASTLING][2] != NoRights  );
-            if(gameInfo.variant == VariantSChess) { // for S-Chess, indicate all vrgin backrank pieces
-		for(i=j=0; i<BOARD_HEIGHT; i++) j += boards[move][i][BOARD_RGHT]; // count white held pieces
-                for(i=BOARD_RGHT-1-k; i>=BOARD_LEFT+q && j; i--)
+            if(handW) { // for S-Chess with pieces in hand, list virgin pieces between K and Q
+                for(i=BOARD_RGHT-1-k; i>=BOARD_LEFT+q; i--)
                     if((boards[move][0][i] != WhiteKing || k+q == 0) &&
                         boards[move][VIRGIN][i] & VIRGIN_W) *p++ = i + AAA + 'A' - 'a';
             }
@@ -17117,9 +17883,8 @@ PositionToFEN (int move, char *overrideCastling)
                boards[move][CASTLING][5] != NoRights  ) k = 1, *p++ = 'k';
             q = (boards[move][CASTLING][4] == BOARD_LEFT &&
                  boards[move][CASTLING][5] != NoRights  );
-            if(gameInfo.variant == VariantSChess) {
-		for(i=j=0; i<BOARD_HEIGHT; i++) j += boards[move][i][BOARD_LEFT-1]; // count black held pieces
-                for(i=BOARD_RGHT-1-k; i>=BOARD_LEFT+q && j; i--)
+            if(handB) {
+                for(i=BOARD_RGHT-1-k; i>=BOARD_LEFT+q; i--)
                     if((boards[move][BOARD_HEIGHT-1][i] != BlackKing || k+q == 0) &&
                         boards[move][VIRGIN][i] & VIRGIN_B) *p++ = i + AAA;
             }
@@ -17131,7 +17896,8 @@ PositionToFEN (int move, char *overrideCastling)
   }
 
   if(gameInfo.variant != VariantShogi    && gameInfo.variant != VariantXiangqi &&
-     gameInfo.variant != VariantShatranj && gameInfo.variant != VariantCourier && gameInfo.variant != VariantMakruk ) {
+     gameInfo.variant != VariantShatranj && gameInfo.variant != VariantCourier &&
+     gameInfo.variant != VariantMakruk   && gameInfo.variant != VariantASEAN ) {
     /* En passant target square */
     if (move > backwardMostMove) {
         fromX = moveList[move - 1][0] - AAA;
@@ -17163,9 +17929,10 @@ PositionToFEN (int move, char *overrideCastling)
   }
   }
 
-    /* [HGM] find reversible plies */
+    if(moveCounts)
     {   int i = 0, j=move;
 
+        /* [HGM] find reversible plies */
         if (appData.debugMode) { int k;
             fprintf(debugFP, "write FEN 50-move: %d %d %d\n", initialRulePlies, forwardMostMove, backwardMostMove);
             for(k=backwardMostMove; k<=forwardMostMove; k++)
@@ -17177,62 +17944,72 @@ PositionToFEN (int move, char *overrideCastling)
         if( j == backwardMostMove ) i += initialRulePlies;
         sprintf(p, "%d ", i);
         p += i>=100 ? 4 : i >= 10 ? 3 : 2;
-    }
-    /* Fullmove number */
-    sprintf(p, "%d", (move / 2) + 1);
+
+        /* Fullmove number */
+        sprintf(p, "%d", (move / 2) + 1);
+    } else *--p = NULLCHAR;
 
     return StrSave(buf);
 }
 
 Boolean
-ParseFEN (Board board, int *blackPlaysFirst, char *fen)
+ParseFEN (Board board, int *blackPlaysFirst, char *fen, Boolean autoSize)
 {
-    int i, j;
+    int i, j, k, w=0, subst=0, shuffle=0;
     char *p, c;
     int emptycount, virgin[BOARD_FILES];
     ChessSquare piece;
 
     p = fen;
 
-    /* [HGM] by default clear Crazyhouse holdings, if present */
-    if(gameInfo.holdingsWidth) {
-       for(i=0; i<BOARD_HEIGHT; i++) {
-           board[i][0]             = EmptySquare; /* black holdings */
-           board[i][BOARD_WIDTH-1] = EmptySquare; /* white holdings */
-           board[i][1]             = (ChessSquare) 0; /* black counts */
-           board[i][BOARD_WIDTH-2] = (ChessSquare) 0; /* white counts */
-       }
-    }
-
     /* Piece placement data */
     for (i = BOARD_HEIGHT - 1; i >= 0; i--) {
 	j = 0;
 	for (;;) {
-            if (*p == '/' || *p == ' ' || (*p == '[' && i == 0) ) {
-                if (*p == '/') p++;
+            if (*p == '/' || *p == ' ' || *p == '[' ) {
+		if(j > w) w = j;
                 emptycount = gameInfo.boardWidth - j;
                 while (emptycount--)
                         board[i][(j++)+gameInfo.holdingsWidth] = EmptySquare;
+                if (*p == '/') p++;
+		else if(autoSize) { // we stumbled unexpectedly into end of board
+                    for(k=i; k<BOARD_HEIGHT; k++) { // too few ranks; shift towards bottom
+		        for(j=0; j<BOARD_WIDTH; j++) board[k-i][j] = board[k][j];
+                    }
+		    appData.NrRanks = gameInfo.boardHeight - i; i=0;
+                }
 		break;
-#if(BOARD_FILES >= 10)
+#if(BOARD_FILES >= 10)*0
             } else if(*p=='x' || *p=='X') { /* [HGM] X means 10 */
                 p++; emptycount=10;
                 if (j + emptycount > gameInfo.boardWidth) return FALSE;
                 while (emptycount--)
                         board[i][(j++)+gameInfo.holdingsWidth] = EmptySquare;
 #endif
+            } else if (*p == '*') {
+		board[i][(j++)+gameInfo.holdingsWidth] = DarkSquare; p++;
             } else if (isdigit(*p)) {
 		emptycount = *p++ - '0';
                 while(isdigit(*p)) emptycount = 10*emptycount + *p++ - '0'; /* [HGM] allow > 9 */
                 if (j + emptycount > gameInfo.boardWidth) return FALSE;
                 while (emptycount--)
                         board[i][(j++)+gameInfo.holdingsWidth] = EmptySquare;
+            } else if (*p == '<') {
+                if(i == BOARD_HEIGHT-1) shuffle = 1;
+                else if (i != 0 || !shuffle) return FALSE;
+                p++;
+            } else if (shuffle && *p == '>') {
+                p++; // for now ignore closing shuffle range, and assume rank-end
+            } else if (*p == '?') {
+                if (j >= gameInfo.boardWidth) return FALSE;
+                if (i != 0  && i != BOARD_HEIGHT-1) return FALSE; // only on back-rank
+		board[i][(j++)+gameInfo.holdingsWidth] = ClearBoard; p++; subst++; // placeHolder
             } else if (*p == '+' || isalpha(*p)) {
                 if (j >= gameInfo.boardWidth) return FALSE;
                 if(*p=='+') {
                     piece = CharToPiece(*++p);
                     if(piece == EmptySquare) return FALSE; /* unknown piece */
-                    piece = (ChessSquare) (PROMOTED piece ); p++;
+                    piece = (ChessSquare) (CHUPROMOTED piece ); p++;
                     if(PieceToChar(piece) != '+') return FALSE; /* unpromotable piece */
                 } else piece = CharToPiece(*p++);
 
@@ -17250,10 +18027,24 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
     }
     while (*p == '/' || *p == ' ') p++;
 
+    if(autoSize) appData.NrFiles = w, InitPosition(TRUE);
+
+    /* [HGM] by default clear Crazyhouse holdings, if present */
+    if(gameInfo.holdingsWidth) {
+       for(i=0; i<BOARD_HEIGHT; i++) {
+           board[i][0]             = EmptySquare; /* black holdings */
+           board[i][BOARD_WIDTH-1] = EmptySquare; /* white holdings */
+           board[i][1]             = (ChessSquare) 0; /* black counts */
+           board[i][BOARD_WIDTH-2] = (ChessSquare) 0; /* white counts */
+       }
+    }
+
     /* [HGM] look for Crazyhouse holdings here */
     while(*p==' ') p++;
     if( gameInfo.holdingsWidth && p[-1] == '/' || *p == '[') {
+        int swap=0, wcnt=0, bcnt=0;
         if(*p == '[') p++;
+        if(*p == '<') swap++, p++;
         if(*p == '-' ) p++; /* empty holdings */ else {
             if( !gameInfo.holdingsWidth ) return FALSE; /* no room to put holdings! */
             /* if we would allow FEN reading to set board size, we would   */
@@ -17266,17 +18057,45 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
                     if( i >= gameInfo.holdingsSize ) return FALSE;
                     board[BOARD_HEIGHT-1-i][0] = piece; /* black holdings */
                     board[BOARD_HEIGHT-1-i][1]++;       /* black counts   */
+                    bcnt++;
                 } else {
                     i = (int)piece - (int)WhitePawn;
 		    i = PieceToNumber((ChessSquare)i);
                     if( i >= gameInfo.holdingsSize ) return FALSE;
                     board[i][BOARD_WIDTH-1] = piece;    /* white holdings */
                     board[i][BOARD_WIDTH-2]++;          /* black holdings */
+                    wcnt++;
                 }
+            }
+            if(subst) { // substitute back-rank question marks by holdings pieces
+                for(j=BOARD_LEFT; j<BOARD_RGHT; j++) {
+                    int k, m, n = bcnt + 1;
+                    if(board[0][j] == ClearBoard) {
+                        if(!wcnt) return FALSE;
+                        n = rand() % wcnt;
+                        for(k=0, m=n; k<gameInfo.holdingsSize; k++) if((m -= board[k][BOARD_WIDTH-2]) < 0) {
+                            board[0][j] = board[k][BOARD_WIDTH-1]; wcnt--;
+                            if(--board[k][BOARD_WIDTH-2] == 0) board[k][BOARD_WIDTH-1] = EmptySquare;
+                            break;
+                        }
+                    }
+                    if(board[BOARD_HEIGHT-1][j] == ClearBoard) {
+                        if(!bcnt) return FALSE;
+                        if(n >= bcnt) n = rand() % bcnt; // use same randomization for black and white if possible
+                        for(k=0, m=n; k<gameInfo.holdingsSize; k++) if((n -= board[BOARD_HEIGHT-1-k][1]) < 0) {
+                            board[BOARD_HEIGHT-1][j] = board[BOARD_HEIGHT-1-k][0]; bcnt--;
+                            if(--board[BOARD_HEIGHT-1-k][1] == 0) board[BOARD_HEIGHT-1-k][0] = EmptySquare;
+                            break;
+                        }
+                    }
+                }
+                subst = 0;
             }
         }
         if(*p == ']') p++;
     }
+
+    if(subst) return FALSE; // substitution requested, but no holdings
 
     while(*p == ' ') p++;
 
@@ -17304,7 +18123,7 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
     board[EP_STATUS] = EP_UNKNOWN;
     for(i=0; i<nrCastlingRights; i++ ) {
         board[CASTLING][i] =
-            gameInfo.variant == VariantFischeRandom || gameInfo.variant == VariantCapaRandom ? NoRights : initialRights[i];
+            appData.fischerCastling ? NoRights : initialRights[i];
     }   /* assume possible unless obviously impossible */
     if(initialRights[0]!=NoRights && board[castlingRank[0]][initialRights[0]] != WhiteRook) board[CASTLING][0] = NoRights;
     if(initialRights[1]!=NoRights && board[castlingRank[1]][initialRights[1]] != WhiteRook) board[CASTLING][1] = NoRights;
@@ -17318,6 +18137,7 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
 
     while(*p==' ') p++;
     if(nrCastlingRights) {
+      int fischer = 0;
       if(gameInfo.variant == VariantSChess) for(i=0; i<BOARD_FILES; i++) virgin[i] = 0;
       if(*p >= 'A' && *p <= 'Z' || *p >= 'a' && *p <= 'z' || *p=='-') {
           /* castling indicator present, so default becomes no castlings */
@@ -17326,7 +18146,7 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
           }
       }
       while(*p=='K' || *p=='Q' || *p=='k' || *p=='q' || *p=='-' ||
-             (gameInfo.variant == VariantFischeRandom || gameInfo.variant == VariantCapaRandom || gameInfo.variant == VariantSChess) &&
+             (appData.fischerCastling || gameInfo.variant == VariantSChess) &&
              ( *p >= 'a' && *p < 'a' + gameInfo.boardWidth) ||
              ( *p >= 'A' && *p < 'A' + gameInfo.boardWidth)   ) {
         int c = *p++, whiteKingFile=NoRights, blackKingFile=NoRights;
@@ -17348,6 +18168,7 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
               board[CASTLING][2] = whiteKingFile;
 	      if(board[CASTLING][0] != NoRights) virgin[board[CASTLING][0]] |= VIRGIN_W;
 	      if(board[CASTLING][2] != NoRights) virgin[board[CASTLING][2]] |= VIRGIN_W;
+              if(whiteKingFile != BOARD_WIDTH>>1|| i != BOARD_RGHT-1) fischer = 1;
               break;
           case'Q':
               for(i=BOARD_LEFT;  i<BOARD_RGHT && board[0][i]!=WhiteRook && i<whiteKingFile; i++);
@@ -17355,6 +18176,7 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
               board[CASTLING][2] = whiteKingFile;
 	      if(board[CASTLING][1] != NoRights) virgin[board[CASTLING][1]] |= VIRGIN_W;
 	      if(board[CASTLING][2] != NoRights) virgin[board[CASTLING][2]] |= VIRGIN_W;
+              if(whiteKingFile != BOARD_WIDTH>>1|| i != BOARD_LEFT) fischer = 1;
               break;
           case'k':
               for(i=BOARD_RGHT-1; board[BOARD_HEIGHT-1][i]!=BlackRook && i>blackKingFile; i--);
@@ -17362,6 +18184,7 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
               board[CASTLING][5] = blackKingFile;
 	      if(board[CASTLING][3] != NoRights) virgin[board[CASTLING][3]] |= VIRGIN_B;
 	      if(board[CASTLING][5] != NoRights) virgin[board[CASTLING][5]] |= VIRGIN_B;
+              if(blackKingFile != BOARD_WIDTH>>1|| i != BOARD_RGHT-1) fischer = 1;
               break;
           case'q':
               for(i=BOARD_LEFT; i<BOARD_RGHT && board[BOARD_HEIGHT-1][i]!=BlackRook && i<blackKingFile; i++);
@@ -17369,6 +18192,7 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
               board[CASTLING][5] = blackKingFile;
 	      if(board[CASTLING][4] != NoRights) virgin[board[CASTLING][4]] |= VIRGIN_B;
 	      if(board[CASTLING][5] != NoRights) virgin[board[CASTLING][5]] |= VIRGIN_B;
+              if(blackKingFile != BOARD_WIDTH>>1|| i != BOARD_LEFT) fischer = 1;
           case '-':
               break;
           default: /* FRC castlings */
@@ -17402,7 +18226,9 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
       }
       for(i=0; i<nrCastlingRights; i++)
         if(board[CASTLING][i] != NoRights) initialRights[i] = board[CASTLING][i];
-      if(gameInfo.variant == VariantSChess) for(i=0; i<BOARD_FILES; i++) board[VIRGIN][i] = virgin[i];
+      if(gameInfo.variant == VariantSChess)
+        for(i=0; i<BOARD_FILES; i++) board[VIRGIN][i] = shuffle ? VIRGIN_W | VIRGIN_B : virgin[i]; // when shuffling assume all virgin
+      if(fischer && shuffle) appData.fischerCastling = TRUE;
     if (appData.debugMode) {
         fprintf(debugFP, "FEN castling rights:");
         for(i=0; i<nrCastlingRights; i++)
@@ -17413,9 +18239,12 @@ ParseFEN (Board board, int *blackPlaysFirst, char *fen)
       while(*p==' ') p++;
     }
 
+    if(shuffle) SetUpShuffle(board, appData.defaultFrcPosition);
+
     /* read e.p. field in games that know e.p. capture */
     if(gameInfo.variant != VariantShogi    && gameInfo.variant != VariantXiangqi &&
-       gameInfo.variant != VariantShatranj && gameInfo.variant != VariantCourier && gameInfo.variant != VariantMakruk ) {
+       gameInfo.variant != VariantShatranj && gameInfo.variant != VariantCourier &&
+       gameInfo.variant != VariantMakruk && gameInfo.variant != VariantASEAN ) {
       if(*p=='-') {
         p++; board[EP_STATUS] = EP_NONE;
       } else {
@@ -17442,7 +18271,7 @@ EditPositionPasteFEN (char *fen)
   if (fen != NULL) {
     Board initial_position;
 
-    if (!ParseFEN(initial_position, &blackPlaysFirst, fen)) {
+    if (!ParseFEN(initial_position, &blackPlaysFirst, fen, TRUE)) {
       DisplayError(_("Bad FEN position in clipboard"), 0);
       return ;
     } else {

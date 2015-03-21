@@ -1,7 +1,7 @@
 /*
  * wgamelist.c -- Game list window for WinBoard
  *
- * Copyright 1995, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Copyright 1995, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * Enhancements Copyright 2005 Alessandro Scotti
  *
@@ -48,16 +48,8 @@ static BOOLEAN gameListUp = FALSE;
 static FILE* gameFile;
 static char* gameFileName = NULL;
 
-struct GameListStats
-{
-    int white_wins;
-    int black_wins;
-    int drawn;
-    int unfinished;
-};
-
 /* [AS] Setup the game list according to the specified filter */
-static int GameListToListBox( HWND hDlg, BOOL boReset, char * pszFilter, struct GameListStats * stats, BOOL byPos, BOOL narrow )
+int GameListToListBox( HWND hDlg, BOOL boReset, char * pszFilter, struct GameListStats * stats, BOOL byPos, BOOL narrow )
 {
     ListGame * lg = (ListGame *) gameList.head;
     int nItem;
@@ -65,6 +57,9 @@ static int GameListToListBox( HWND hDlg, BOOL boReset, char * pszFilter, struct 
     BOOL hasFilter = FALSE;
     int count = 0;
     struct GameListStats dummy;
+
+    if(!hDlg) hDlg = gameListDialog; // [HGM] to allow calling from Game List Options dialog
+    if(!hDlg) return 0;
 
     /* Initialize stats (use a dummy variable if caller not interested in them) */
     if( stats == NULL ) {
@@ -95,7 +90,7 @@ static int GameListToListBox( HWND hDlg, BOOL boReset, char * pszFilter, struct 
 
         if(nItem % 2000 == 0) {
           snprintf(buf, MSG_SIZ, _("Scanning through games (%d)"), nItem);
-          SetWindowText(hwndMain, buf);
+          SetWindowText(hwndMain, buf); DoEvents();
         }
 
       if(!narrow || lg->position >= 0) {
@@ -164,7 +159,7 @@ GameListDialog(HWND hDlg, UINT message,	WPARAM wParam, LPARAM lParam)
   int nItem;
   RECT rect;
   static int sizeX, sizeY;
-  int newSizeX, newSizeY, flags;
+  int newSizeX, newSizeY;
   MINMAXINFO *mmi;
   static BOOL filterHasFocus = FALSE;
   int count;
@@ -197,7 +192,6 @@ GameListDialog(HWND hDlg, UINT message,	WPARAM wParam, LPARAM lParam)
     /* Size and position the dialog */
     if (!gameListDialog) {
       gameListDialog = hDlg;
-      flags = SWP_NOZORDER;
       GetClientRect(hDlg, &rect);
       sizeX = rect.right;
       sizeY = rect.bottom;
@@ -407,6 +401,7 @@ VOID GameListPopUp(FILE *fp, char *filename)
     gameFileName = StrSave(filename);
   }
   CheckMenuItem(GetMenu(hwndMain), IDM_ShowGameList, MF_CHECKED);
+  EnableMenuItem(GetMenu(hwndMain), IDM_SaveSelected, MF_ENABLED);
   if (gameListDialog) {
     SendMessage(gameListDialog, WM_INITDIALOG, 0, 0);
     if (!gameListUp) ShowWindow(gameListDialog, SW_SHOW);
@@ -428,6 +423,7 @@ FILE *GameFile()
 VOID GameListPopDown(void)
 {
   CheckMenuItem(GetMenu(hwndMain), IDM_ShowGameList, MF_UNCHECKED);
+  EnableMenuItem(GetMenu(hwndMain), IDM_SaveSelected, MF_GRAYED);
   if (gameListDialog) ShowWindow(gameListDialog, SW_HIDE);
   gameListUp = FALSE;
 }
@@ -436,14 +432,22 @@ VOID GameListPopDown(void)
 VOID GameListHighlight(int index)
 {
   char buf[MSG_SIZ];
-  int i, res = 0;
+  int i, j, k, n, res = 0;
   if (gameListDialog == NULL) return;
-  for(i=0; res != LB_ERR; i++) {
+  for(i=64; ; i+=i) {
         res = SendDlgItemMessage( gameListDialog, OPT_GameListText, LB_GETTEXT, i, (LPARAM)buf );
-        if(index <= atoi( buf )) break;
+        if(res == LB_ERR || index < atoi( buf )) break;
   }
-  SendDlgItemMessage(gameListDialog, OPT_GameListText,
-    LB_SETCURSEL, i, 0);
+  j = i/2;
+  while(i-j > 1) {
+        n = (i + j) >> 1;
+        res = SendDlgItemMessage( gameListDialog, OPT_GameListText, LB_GETTEXT, n, (LPARAM)buf );
+        if(res == LB_ERR || index < (k = atoi( buf ))) i = n; else {
+            j = n;
+            if(index == k) break;
+        }
+  }
+  SendDlgItemMessage(gameListDialog, OPT_GameListText, LB_SETCURSEL, j, 0);
 }
 
 

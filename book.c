@@ -28,6 +28,8 @@
  * ------------------------------------------------------------------------
  */
 
+#include "config.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -757,7 +759,12 @@ TextToMoves (char *text, int moveNum, entry_t *entries)
 	    if(w == 1) text = strstr(text, "1 ") + 2; // skip weight that could be recognized as move number one
 	    valid = ParseOneMove(text, moveNum, &moveType, &fromX, &fromY, &toX, &toY, &promoChar);
 	    text = strstr(text, yy_textstr) + strlen(yy_textstr); // skip what we parsed
-	    if(!valid || moveType != NormalMove) continue;
+	    if(!valid || moveType != NormalMove && moveType != WhiteDrop && moveType != BlackDrop
+                                                && moveType != WhitePromotion && moveType != BlackPromotion
+                                                && moveType != WhiteCapturesEnPassant && moveType != BlackCapturesEnPassant
+                                                && moveType != WhiteKingSideCastle && moveType != BlackKingSideCastle
+                                                && moveType != WhiteQueenSideCastle && moveType != BlackQueenSideCastle
+                                                && moveType != WhiteNonPromotion && moveType != BlackNonPromotion) continue;
 	    if(*text == ' ' && sscanf(text+1, "{%hd/%hd}", &entries[count].learnPoints, &entries[count].learnCount) == 2) {
 		text = strchr(text+1, '}') + 1;
 	    } else {
@@ -787,6 +794,7 @@ DisplayBook (int moveNr)
     p = MovesToText(count, entries);
     EditTagsPopUp(p, NULL);
     free(p);
+    addToBookFlag = FALSE;
     return TRUE;
 }
 
@@ -976,6 +984,15 @@ AddGameToBook (int always)
 
     for(i=backwardMostMove; i<forwardMostMove && i < 2*appData.bookDepth; i++)
 	AddToBook(i, WhiteOnMove(i) ? result : 2-result); // flip result when black moves
+}
+
+void
+PlayBookMove(char *text, int index)
+{
+    char *start = text+index, *end = start;
+    while(start > text && start[-1] != ' ' && start[-1] != '\t') start--;
+    while(*end && *++end != ' ' && *end != '\n'); *end = NULLCHAR; // find clicked word
+    if(start != end) TypeInDoneEvent(start); // fake it was typed in move type-in
 }
 
 void

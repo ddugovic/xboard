@@ -1,4 +1,27 @@
 /*
+ * woptions.h -- Options dialog box routines for WinBoard
+ *
+ * Copyright 2003, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
+ *
+ * ------------------------------------------------------------------------
+ *
+ * GNU XBoard is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at
+ * your option) any later version.
+ *
+ * GNU XBoard is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see http://www.gnu.org/licenses/.  *
+ *
+ *------------------------------------------------------------------------
+ ** See the file ChangeLog for a revision history.  */
+
+/*
  * Engine-settings dialog. The complexity come from an attempt to present the engine-defined options
  * in a nicey formatted layout. To this end we first run a back-end pre-formatter, which will distribute
  * the controls over two columns (the minimum required, as some are double width). It also takes care of
@@ -97,7 +120,7 @@ void
 LayoutOptions(int firstOption, int endOption, char *groupName, Option *optionList)
 {
     int i, b = strlen(groupName), stop, prefix, right, nextOption, firstButton = buttons;
-    Control lastType, nextType;
+    Control lastType, nextType=Label;
 
     nextOption = firstOption;
     while(nextOption < endOption) {
@@ -357,7 +380,6 @@ int
 GetOptionValues(HWND hDlg, ChessProgramState *cps, Option *optionList)
 // read out all controls, and if value is altered, remember it and send it to the engine
 {
-    HANDLE hwndCombo;
     int i, k, new=0, changed=0, len;
     char **choices, newText[MSG_SIZ], buf[MSG_SIZ], *text;
     BOOL success;
@@ -401,7 +423,6 @@ GetOptionValues(HWND hDlg, ChessProgramState *cps, Option *optionList)
 		break;
 	    case ComboBox:
 		choices = (char**) optionList[j].textValue;
-		hwndCombo = GetDlgItem(hDlg, 2001+2*i);
 		success = GetDlgItemText( hDlg, 2001+2*i, newText, MSG_SIZ );
 		if(!success) break;
 		new = -1;
@@ -472,7 +493,7 @@ LRESULT CALLBACK SettingsProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
 		if(j == -2) {
 		          char filter[] =
 				"All files\0*.*\0Game files\0*.pgn;*.gam\0Position files\0*.fen;*.epd;*.pos\0"
-				"EXE files\0*.exe\0Tournament files (*.trn)\0*.trn\0"
+				"EXE files\0*.exe;*.jar\0Tournament files (*.trn)\0*.trn\0"
 				"BIN Files\0*.bin\0LOG Files\0*.log\0INI Files\0*.ini\0"
 				"Image files\0*.bmp\0\0";
 		          OPENFILENAME ofn;
@@ -551,13 +572,15 @@ void AddControl(int x, int y, int w, int h, int type, int style, int n)
 
 void AddOption(int x, int y, Control type, int i)
 {
-    int extra;
+    int extra, num = ES_NUMBER;
 
     switch(type) {
+	case Spin+100:
+	    num = 0; // needs text control for accepting negative numbers
 	case Slider:
 	case Spin:
 	    AddControl(x, y+1, 95, 9, 0x0082, SS_ENDELLIPSIS | WS_VISIBLE | WS_CHILD, i);
-	    AddControl(x+95, y, 50, 11, 0x0081, ES_AUTOHSCROLL | ES_NUMBER | WS_BORDER | WS_VISIBLE | WS_CHILD | WS_TABSTOP, i+1);
+	    AddControl(x+95, y, 50, 11, 0x0081, ES_AUTOHSCROLL | num | WS_BORDER | WS_VISIBLE | WS_CHILD | WS_TABSTOP, i+1);
 	    break;
 	case TextBox:
 	    extra = 13*activeList[layoutList[i/2]].min; // when extra high, left-align and put description text above it
@@ -625,7 +648,8 @@ CreateDialogTemplate(int *layoutList, int nr, Option *optionList)
 	}
 	j = layoutList[i];
 	if(j >= 0) {
-	    AddOption(x+155-150*(i&1), y+13*(i>>1)+5, optionList[j].type, 2*i);
+	    int neg = (optionList[j].type == Spin && optionList[j].min < 0 ? 100 : 0); // flags spin with negative range
+	    AddOption(x+155-150*(i&1), y+13*(i>>1)+5, optionList[j].type + neg, 2*i);
 	    // listboxes have the special power to adjust the width of the column they are in
 	    if(optionList[j].type == ListBox) x -= optionList[j].value, template.header.cx -= optionList[j].value;
 	}
@@ -686,7 +710,7 @@ Option installOptions[] = {
   {   0,  0,    0, NULL, NULL, NULL, NULL, Label, N_("or specify one below:") },
   {   0,  0,    0, NULL, (void*) &nickName, NULL, NULL, TextBox, N_("Nickname (optional):") },
   {   0,  0,    0, NULL, (void*) &useNick, NULL, NULL, CheckBox, N_("Use nickname in PGN tag") },
-  {   0,  0, 32+3, NULL, (void*) &engineName, NULL, NULL, FileName, N_("Engine (*.exe):") },
+  {   0,  0, 32+3, NULL, (void*) &engineName, NULL, NULL, FileName, N_("Engine (.exe or .jar):") },
   {   0,  0,    0, NULL, (void*) &params, NULL, NULL, TextBox, N_("command-line parameters:") },
   {   0,  0,    0, NULL, (void*) &wbOptions, NULL, NULL, TextBox, N_("Special WinBoard options:") },
   {   0,  0,    0, NULL, (void*) &engineDir, NULL, NULL, PathName, N_("directory:") },
@@ -862,8 +886,7 @@ int MatchOK()
 
 void PseudoOK(HWND hDlg)
 {
-    void (*saveOK)();
-    saveOK = okFunc; okFunc = 0;
+    okFunc = 0;
     GetOptionValues(hDlg, activeCps, activeList);
     EndDialog( hDlg, 0 );
     comboCallback = NULL; activeCps = NULL;

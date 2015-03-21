@@ -1,7 +1,7 @@
 /*
  * wedittags.c -- EditTags window for WinBoard
  *
- * Copyright 1995, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Copyright 1995, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * Enhancements Copyright 2005 Alessandro Scotti
  *
@@ -26,6 +26,7 @@
 #include "config.h"
 
 #include <windows.h>   /* required for all Windows applications */
+#include <richedit.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
@@ -43,6 +44,7 @@
 
 /* Module globals */
 static char *editTagsText, **resPtr;
+static HWND memo;
 BOOL editTagsUp = FALSE;
 BOOL canEditTags = FALSE;
 
@@ -56,7 +58,7 @@ EditTagsDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
   static HANDLE hwndText;
   static int sizeX, sizeY;
-  int len, newSizeX, newSizeY, flags;
+  int len, newSizeX, newSizeY;
   char *str;
   RECT rect;
   MINMAXINFO *mmi;
@@ -66,14 +68,15 @@ EditTagsDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
   case WM_INITDIALOG: /* message: initialize dialog box */
     /* Initialize the dialog items */
     Translate(hDlg, DLG_EditTags);
-   hwndText = GetDlgItem(hDlg, OPT_TagsText);
+   hwndText = memo = GetDlgItem(hDlg, OPT_TagsText);
     SendMessage(hwndText, WM_SETFONT, 
       (WPARAM)font[boardSize][EDITTAGS_FONT]->hf, MAKELPARAM(FALSE, 0));
     SetDlgItemText(hDlg, OPT_TagsText, editTagsText);
     EnableWindow(GetDlgItem(hDlg, OPT_TagsCancel), canEditTags);
-    EnableWindow(GetDlgItem(hDlg, OPT_EditTags), !canEditTags);
+    EnableWindow(GetDlgItem(hDlg, OPT_EditTags), !canEditTags || bookUp);
     SendMessage(hwndText, EM_SETREADONLY, !canEditTags, 0);
     if (bookUp) {
+      SetDlgItemText(hDlg, OPT_EditTags, _("&Play Move"));
       SetWindowText(hDlg, _("Edit Book"));
       SetFocus(hwndText);
     } else
@@ -86,10 +89,10 @@ EditTagsDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
     }
     if (!editTagsDialog) {
       editTagsDialog = hDlg;
-      flags = SWP_NOZORDER;
       GetClientRect(hDlg, &rect);
       sizeX = rect.right;
       sizeY = rect.bottom;
+      SendDlgItemMessage( hDlg, OPT_TagsText, EM_SETEVENTMASK, 0, ENM_MOUSEEVENTS );
       if (wpTags.x != CW_USEDEFAULT && wpTags.y != CW_USEDEFAULT &&
 	  wpTags.width != CW_USEDEFAULT && wpTags.height != CW_USEDEFAULT) {
 	WINDOWPLACEMENT wp;
@@ -118,6 +121,7 @@ EditTagsDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
   case WM_COMMAND:
     switch (LOWORD(wParam)) {
     case IDOK:
+    case OPT_TagsSave:
       if (canEditTags) {
 	char *p, *q;
 	/* Read changed options from the dialog box */
@@ -133,13 +137,13 @@ EditTagsDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 	}
 	*p = NULLCHAR; err = 0;
         if(resPtr) *resPtr = strdup(str); else
-	if(bookUp) SaveToBook(str); else
+	if(bookUp) SaveToBook(str), DisplayBook(currentMove); else
 	err = ReplaceTags(str, &gameInfo);
 	if (err) DisplayError(_("Error replacing tags."), err);
 
 	free(str);
       }
-      TagsPopDown();
+      if(LOWORD(wParam) == IDOK) TagsPopDown();
       return TRUE;
       
     case IDCANCEL:
@@ -148,6 +152,7 @@ EditTagsDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
       return TRUE;
       
     case OPT_EditTags:
+      if(bookUp) addToBookFlag = !addToBookFlag; else
       EditTagsEvent();
       return TRUE;
 
@@ -155,6 +160,34 @@ EditTagsDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
       break;
     }
     break;
+
+  case WM_NOTIFY: // [HGM] vari: cloned from whistory.c
+        if( wParam == OPT_TagsText ) {
+            MSGFILTER * lpMF = (MSGFILTER *) lParam;
+
+            if( lpMF->msg == WM_RBUTTONDOWN ) {
+                POINTL pt;
+                LRESULT index;
+
+                pt.x = LOWORD( lpMF->lParam );
+                pt.y = HIWORD( lpMF->lParam );
+
+                index = SendDlgItemMessage( hDlg, OPT_TagsText, EM_CHARFROMPOS, 0, (LPARAM) &pt );
+
+		hwndText = GetDlgItem(hDlg, OPT_TagsText); // cloned from above
+		len = GetWindowTextLength(hwndText);
+		str = (char *) malloc(len + 1);
+		GetWindowText(hwndText, str, len + 1);
+		if(bookUp) PlayBookMove(str, index);
+		free(str);
+
+                /* Zap the message for good: apparently, returning non-zero is not enough */
+                lpMF->msg = WM_USER;
+
+                return TRUE;
+            }
+        }
+        break;
 
   case WM_SIZE:
     newSizeX = LOWORD(lParam);
@@ -174,11 +207,17 @@ EditTagsDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
   return FALSE;
 }
 
+VOID AddBookMove(char *text)
+{
+    SendMessage( memo, EM_SETSEL, 999999, 999999 ); // [HGM] multivar: choose insertion point
+    SendMessage( memo, EM_REPLACESEL, (WPARAM) FALSE, (LPARAM) text );
+}
+
 VOID TagsPopDown(void)
 {
   if (editTagsDialog) ShowWindow(editTagsDialog, SW_HIDE);
   CheckMenuItem(GetMenu(hwndMain), IDM_Tags, MF_UNCHECKED);
-  editTagsUp = bookUp = FALSE;
+  editTagsUp = bookUp = addToBookFlag = FALSE;
 }
 
 

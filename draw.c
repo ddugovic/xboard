@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * The following terms apply to Digital Equipment Corporation's copyright
  * interest in XBoard:
@@ -109,13 +109,15 @@ static cairo_surface_t *pngPieceImages[2][(int)BlackPawn+4];   // png 256 x 256 
 static cairo_surface_t *pngPieceBitmaps[2][(int)BlackPawn];    // scaled pieces as used
 static cairo_surface_t *pngPieceBitmaps2[2][(int)BlackPawn+4]; // scaled pieces in store
 static RsvgHandle *svgPieces[2][(int)BlackPawn+4]; // vector pieces in store
-static cairo_surface_t *pngBoardBitmap[2];
+static cairo_surface_t *pngBoardBitmap[2], *pngOriginalBoardBitmap[2];
 int useTexture, textureW[2], textureH[2];
 
 #define pieceToSolid(piece) &pieceBitmap[SOLID][(piece) % (int)BlackPawn]
 #define pieceToOutline(piece) &pieceBitmap[OUTLINE][(piece) % (int)BlackPawn]
 
 #define White(piece) ((int)(piece) < (int)BlackPawn)
+
+char svgDir[MSG_SIZ] = SVGDIR;
 
 char *crWhite = "#FFFFB0";
 char *crBlack = "#AD5D3D";
@@ -139,12 +141,13 @@ SelectPieces(VariantClass v)
 	int p;
 	for(p=0; p<=(int)WhiteKing; p++)
 	   pngPieceBitmaps[i][p] = pngPieceBitmaps2[i][p]; // defaults
-	if(v == VariantShogi) {
-	   pngPieceBitmaps[i][(int)WhiteCannon] = pngPieceBitmaps2[i][(int)WhiteKing+1];
+	if(v == VariantShogi && BOARD_HEIGHT != 7) { // no exceptions in Tori Shogi
+	   pngPieceBitmaps[i][(int)WhiteCannon] = pngPieceBitmaps2[i][(int)WhiteTokin];
 	   pngPieceBitmaps[i][(int)WhiteNightrider] = pngPieceBitmaps2[i][(int)WhiteKing+2];
-	   pngPieceBitmaps[i][(int)WhiteSilver] = pngPieceBitmaps2[i][(int)WhiteKing+3];
-	   pngPieceBitmaps[i][(int)WhiteGrasshopper] = pngPieceBitmaps2[i][(int)WhiteKing+4];
+	   pngPieceBitmaps[i][(int)WhiteGrasshopper] = pngPieceBitmaps2[i][(int)WhiteKing+3];
+	   pngPieceBitmaps[i][(int)WhiteSilver] = pngPieceBitmaps2[i][(int)WhiteKing+4];
 	   pngPieceBitmaps[i][(int)WhiteQueen] = pngPieceBitmaps2[i][(int)WhiteLance];
+	   pngPieceBitmaps[i][(int)WhiteFalcon] = pngPieceBitmaps2[i][(int)WhiteMonarch]; // for Sho Shogi
 	}
 #ifdef GOTHIC
 	if(v == VariantGothic) {
@@ -154,6 +157,15 @@ SelectPieces(VariantClass v)
 	if(v == VariantSChess) {
 	   pngPieceBitmaps[i][(int)WhiteAngel]    = pngPieceBitmaps2[i][(int)WhiteFalcon];
 	   pngPieceBitmaps[i][(int)WhiteMarshall] = pngPieceBitmaps2[i][(int)WhiteAlfil];
+	}
+	if(v == VariantChuChess) {
+	   pngPieceBitmaps[i][(int)WhiteNightrider] = pngPieceBitmaps2[i][(int)WhiteLion];
+	}
+	if(v == VariantChu) {
+	   pngPieceBitmaps[i][(int)WhiteNightrider] = pngPieceBitmaps2[i][(int)WhiteKing+1];
+	   pngPieceBitmaps[i][(int)WhiteUnicorn] = pngPieceBitmaps2[i][(int)WhiteCat];
+	   pngPieceBitmaps[i][(int)WhiteSilver]  = pngPieceBitmaps2[i][(int)WhiteSword];
+	   pngPieceBitmaps[i][(int)WhiteFalcon]  = pngPieceBitmaps2[i][(int)WhiteDagger];
 	}
     }
 }
@@ -165,9 +177,19 @@ InitDrawingSizes (BoardSize boardSize, int flags)
     int boardWidth, boardHeight;
     static int oldWidth, oldHeight;
     static VariantClass oldVariant;
-    static int oldTwoBoards = 0;
+    static int oldTwoBoards = 0, oldNrOfFiles = 0;
 
     if(!mainOptions[W_BOARD].handle) return;
+
+    if(boardSize == -2 && gameInfo.variant != oldVariant
+                       && oldNrOfFiles && oldNrOfFiles != BOARD_WIDTH) { // called because variant switch changed board format
+	squareSize = ((squareSize + lineGap) * oldNrOfFiles + 0.5*BOARD_WIDTH) / BOARD_WIDTH; // keep total width fixed
+	if(appData.overrideLineGap < 0) lineGap = squareSize < 37 ? 1 : squareSize < 59 ? 2 : squareSize < 116 ? 3 : 4;
+        squareSize -= lineGap;
+	CreatePNGPieces();
+        CreateGrid();
+    }
+    oldNrOfFiles = BOARD_WIDTH;
 
     if(oldTwoBoards && !twoBoards) PopDown(DummyDlg);
     oldTwoBoards = twoBoards;
@@ -180,6 +202,7 @@ InitDrawingSizes (BoardSize boardSize, int flags)
 
     oldWidth = boardWidth; oldHeight = boardHeight;
     CreateGrid();
+    CreateAnyPieces(0); // redo texture scaling
 
     /*
      * Inhibit shell resizing.
@@ -215,25 +238,60 @@ ExposeRedraw (Option *graph, int x, int y, int w, int h)
 static void
 CreatePNGBoard (char *s, int kind)
 {
+    float w, h;
+    static float n[2] = { 1., 1. };
     if(!appData.useBitmaps || s == NULL || *s == 0 || *s == '*') { useTexture &= ~(kind+1); return; }
+    textureW[kind] = 0; // prevents bitmap from being used if not succesfully loaded
     if(strstr(s, ".png")) {
 	cairo_surface_t *img = cairo_image_surface_create_from_png (s);
 	if(img) {
-	    useTexture |= kind + 1; pngBoardBitmap[kind] = img;
-	    textureW[kind] = cairo_image_surface_get_width (img);
-	    textureH[kind] = cairo_image_surface_get_height (img);
+	    char c, *p = s, *q;
+	    int r, f;
+	    if(pngOriginalBoardBitmap[kind]) cairo_surface_destroy(pngOriginalBoardBitmap[kind]);
+	    if(n[kind] != 1.) cairo_surface_destroy(pngBoardBitmap[kind]);
+	    useTexture |= kind + 1; pngOriginalBoardBitmap[kind] = img;
+	    w = textureW[kind] = cairo_image_surface_get_width (img);
+	    h = textureH[kind] = cairo_image_surface_get_height (img);
+	    n[kind] = 1.;
+	    while((q = strchr(p+1, '-'))) p = q; // find last '-'
+	    if(strlen(p) < 11 && sscanf(p, "-%dx%d.pn%c", &f, &r, &c) == 3 && c == 'g') {
+		if(f == 0 || r == 0) f = BOARD_WIDTH, r = BOARD_HEIGHT; // 0x0 means 'fits any', so make it fit
+		textureW[kind] = (w*BOARD_WIDTH)/f; // sync cutting locations with square pattern
+		textureH[kind] = (h*BOARD_HEIGHT)/r;
+		n[kind] = r*squareSize/h; // scale to make it fit exactly vertically
+	    } else
+	    if((p = strstr(s, "xq")) && (p == s || p[-1] == '/')) { // assume full-board image for Xiangqi
+		while(0.8*squareSize*BOARD_WIDTH > n[kind]*w || 0.8*squareSize*BOARD_HEIGHT > n[kind]*h) n[kind]++;
+	    } else {
+		while(squareSize > n[kind]*w || squareSize > n[kind]*h) n[kind]++;
+	    }
+	    if(n[kind] == 1.) pngBoardBitmap[kind] = img; else {
+		// create scaled-up copy of the raw png image when it was too small
+		cairo_surface_t *cs = cairo_image_surface_create (CAIRO_FORMAT_ARGB32, n[kind]*w, n[kind]*h);
+		cairo_t *cr = cairo_create(cs);
+		pngBoardBitmap[kind] = cs; textureW[kind] *= n[kind]; textureH[kind] *= n[kind];
+//		cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
+		cairo_scale(cr, n[kind], n[kind]);
+		cairo_set_source_surface (cr, img, 0, 0);
+		cairo_paint (cr);
+		cairo_destroy (cr);
+	    }
 	}
     }
 }
 
 char *pngPieceNames[] = // must be in same order as internal piece encoding
 { "Pawn", "Knight", "Bishop", "Rook", "Queen", "Advisor", "Elephant", "Archbishop", "Marshall", "Gold", "Commoner",
-  "Canon", "Nightrider", "CrownedBishop", "CrownedRook", "Princess", "Chancellor", "Hawk", "Lance", "Cobra", "Unicorn", "King",
-  "GoldKnight", "GoldLance", "GoldPawn", "GoldSilver", NULL
+  "Canon", "Nightrider", "CrownedBishop", "CrownedRook", "Princess", "Chancellor", "Hawk", "Lance", "Cobra", "Unicorn", "Lion",
+  "GoldPawn", "HSword", "PromoHorse", "PromoDragon", "Leopard", "PromoSword", "Prince", "Phoenix", "Kylin", "PromoRook", "PromoHSword",
+  "Dolphin", "Chancellor", "Unicorn", "Hawk", "Sword", "Princess", "HCrown", "Knight", "Elephant", "PromoBishop", "King",
+  "Claw", "GoldKnight", "GoldLance", "GoldSilver", NULL
 };
 
+char *backupPiece[] = { "King", "Queen", "Lion" }; // pieces that map on other when not kanji
+
 RsvgHandle *
-LoadSVG (char *dir, int color, int piece)
+LoadSVG (char *dir, int color, int piece, int retry)
 {
     char buf[MSG_SIZ];
   RsvgHandle *svg=svgPieces[color][piece];
@@ -242,7 +300,8 @@ LoadSVG (char *dir, int color, int piece)
   cairo_surface_t *img;
   cairo_t *cr;
 
-    snprintf(buf, MSG_SIZ, "%s/%s%s.svg", dir, color ? "Black" : "White", pngPieceNames[piece]);
+    snprintf(buf, MSG_SIZ, "%s/%s%s.svg", dir, color ? "Black" : "White",
+             retry ? backupPiece[piece - WhiteMonarch] : pngPieceNames[piece]);
 
     if(svg || *dir && (svg = rsvg_handle_new_from_file(buf, &svgerror))) {
 
@@ -260,6 +319,8 @@ LoadSVG (char *dir, int color, int piece)
 
       return svg;
     }
+    if(!retry && piece >= WhiteMonarch && piece <= WhiteNothing) // pieces that are only different in kanji sets
+        return LoadSVG(dir, color, piece, 1);
     if(svgerror)
 	g_error_free(svgerror);
     return NULL;
@@ -275,22 +336,22 @@ ScaleOnePiece (int color, int piece)
 
   g_type_init ();
 
-  svgPieces[color][piece] = LoadSVG("", color, piece); // this fills pngPieceImages if we had cached svg with bitmap of wanted size
+  svgPieces[color][piece] = LoadSVG("", color, piece, 0); // this fills pngPieceImages if we had cached svg with bitmap of wanted size
 
   if(!pngPieceImages[color][piece]) { // we don't have cached bitmap (implying we did not have cached svg)
     if(*appData.pieceDirectory) { // user specified piece directory
       snprintf(buf, MSG_SIZ, "%s/%s%s.png", appData.pieceDirectory, color ? "Black" : "White", pngPieceNames[piece]);
       img = cairo_image_surface_create_from_png (buf); // try if there are png pieces there
       if(cairo_surface_status(img) != CAIRO_STATUS_SUCCESS) { // there were not
-	svgPieces[color][piece] = LoadSVG(appData.pieceDirectory, color, piece); // so try if he has svg there
+	svgPieces[color][piece] = LoadSVG(appData.pieceDirectory, color, piece, 0); // so try if he has svg there
       } else pngPieceImages[color][piece] = img;
     }
   }
 
   if(!pngPieceImages[color][piece]) { // we still did not manage to acquire a piece bitmap
     static int warned = 0;
-    if(!(svgPieces[color][piece] = LoadSVG(SVGDIR, color, piece)) && !warned) { // try to fall back on installed svg
-      char *msg = _("No default pieces installed\nSelect your own -pieceImageDirectory");
+    if(!(svgPieces[color][piece] = LoadSVG(svgDir, color, piece, 0)) && !warned) { // try to fall back on installed svg 
+      char *msg = _("No default pieces installed!\nSelect your own using '-pieceImageDirectory'.");
       printf("%s\n", msg); // give up
       DisplayError(msg, 0);
       warned = 1; // prevent error message being repeated for each piece type
@@ -352,9 +413,9 @@ CreatePNGPieces ()
 }
 
 void
-CreateAnyPieces ()
+CreateAnyPieces (int p)
 {   // [HGM] taken out of main
-    CreatePNGPieces();
+    if(p) CreatePNGPieces();
     CreatePNGBoard(appData.liteBackTextureFile, 1);
     CreatePNGBoard(appData.darkBackTextureFile, 0);
 }
@@ -370,7 +431,7 @@ InitDrawingParams (int reloadPieces)
 	if(svgPieces[i][p]) rsvg_handle_close(svgPieces[i][p], NULL);
 	svgPieces[i][p] = NULL;
     }
-    CreateAnyPieces();
+    CreateAnyPieces(1);
 }
 
 // [HGM] seekgraph: some low-level drawing routines (by JC, mostly)
@@ -641,6 +702,8 @@ pngDrawPiece (cairo_surface_t *dest, ChessSquare piece, int square_color, int x,
     cairo_destroy (cr);
 }
 
+static char *markerColor[8] = { "#FFFF00", "#FF0000", "#00FF00", "#0000FF", "#00FFFF", "#FF00FF", "#FFFFFF", "#000000" };
+
 void
 DoDrawDot (cairo_surface_t *cs, int marker, int x, int y, int r)
 {
@@ -653,7 +716,7 @@ DoDrawDot (cairo_surface_t *cs, int marker, int x, int y, int r)
 	    cairo_stroke_preserve(cr);
 	    SetPen(cr, 2, marker == 2 ? "#FFFFFF" : "#000000", 0);
 	} else {
-	    SetPen(cr, 2, marker == 2 ? "#FF0000" : "#FFFF00", 0);
+	    SetPen(cr, 2, markerColor[marker-1], 0);
 	}
 	cairo_fill(cr);
 
@@ -679,7 +742,7 @@ DrawText (char *string, int x, int y, int align)
 		    CAIRO_FONT_SLANT_NORMAL,
 		    CAIRO_FONT_WEIGHT_BOLD);
 
-	cairo_set_font_size (cr, squareSize/4);
+	cairo_set_font_size (cr, align < 0 ? 2*squareSize/3 : squareSize/4);
 	// calculate where it goes
 	cairo_text_extents (cr, string, &te);
 
@@ -693,13 +756,41 @@ DrawText (char *string, int x, int y, int align)
 	    yy += -te.y_bearing + 3;
 	} else if (align == 4) {
 	    xx += te.x_bearing + 1, yy += -te.y_bearing + 3;
+	} else if (align < 0) {
+	    xx += squareSize/2 - te.width/2, yy += 9*squareSize/16 - te.y_bearing/2;
 	}
 
 	cairo_move_to (cr, xx-1, yy);
+	if(align == -2) cairo_set_source_rgb (cr, 1.0, 0.0, 0.0); else
 	if(align < 3) cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
 	else          cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
 	cairo_show_text (cr, string);
 	cairo_destroy (cr);
+}
+
+void
+InscribeKanji (ChessSquare piece, int x, int y)
+{
+    char *p, *q, buf[10];
+    int n;
+    if(piece == EmptySquare) return;
+    if(piece >= BlackPawn) piece = BLACK_TO_WHITE piece;
+    p = appData.inscriptions;
+    n = piece;
+    while(piece > WhitePawn) {
+      if(*p++ == NULLCHAR) {
+        if(n != WhiteKing) return;
+        p = q;
+        break;
+      }
+      q = p - 1;
+      while((*p & 0xC0) == 0x80) p++; // skip UTF-8 continuation bytes
+      piece--;
+    }
+    strncpy(buf, p, 10);
+    for(q=buf; (*++q & 0xC0) == 0x80;);
+    *q = NULLCHAR;
+    DrawText(buf, x, y, n > WhiteLion ? -2 : -1);
 }
 
 void
@@ -711,6 +802,7 @@ DrawOneSquare (int x, int y, ChessSquare piece, int square_color, int marker, ch
 	BlankSquare(csBoardWindow, x, y, square_color, piece, 1);
     } else {
 	pngDrawPiece(csBoardWindow, piece, square_color, x, y);
+        if(appData.inscriptions[0]) InscribeKanji(piece, x, y);
     }
 
     if(align) { // square carries inscription (coord or piece count)

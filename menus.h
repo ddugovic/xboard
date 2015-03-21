@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * The following terms apply to Digital Equipment Corporation's copyright
  * interest in XBoard:
@@ -164,6 +164,9 @@ void InitMenuMarkers P((void));
 void ShowGameListProc P((void)); // in ngamelist.c
 void HistoryShowProc P((void));  // in nhistory.c
 
+// only here because it is the only header shared by xoptions.c and usystem.c
+void SetTextColor P((char **cnames, int fg, int bg, int attr));
+void ConsoleWrite P((char *message, int count));
 
 // must be moved to xengineoutput.h
 

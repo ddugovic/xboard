@@ -1,7 +1,7 @@
 /*
  * wclipbrd.c -- Clipboard routines for WinBoard
  *
- * Copyright 2000, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Copyright 2000, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * Enhancements Copyright 2005 Alessandro Scotti
  *
@@ -42,7 +42,6 @@
 
 /* Imports from winboard.c */
 extern HWND hwndMain;
-Boolean ParseFEN(Board b, int *stm, char *FEN);
 
 /* File globals */
 static char *copyTemp;
@@ -54,7 +53,7 @@ CopyFENToClipboard()
   char *fen = NULL;
 
   if(gameMode == EditPosition) EditPositionDone(TRUE); // [HGM] mak sure castling rights are set consistently
-  fen = PositionToFEN(currentMove, NULL);
+  fen = PositionToFEN(currentMove, NULL, 1);
   if (!fen) {
     DisplayError(_("Unable to convert position to FEN."), 0);
     return;
@@ -305,7 +304,7 @@ VOID PasteGameOrFENFromClipboard()
   }
 
   // [HGM] paste any: make still smarter, to allow pasting of games without tags, recognize FEN in stead
-  if(!ParseFEN(dummyBoard, &dummy, buf) ) {
+  if(!ParseFEN(dummyBoard, &dummy, buf, 0) ) {
       PasteGameFromString( buf );
   }
   else {

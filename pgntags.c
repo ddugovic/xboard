@@ -1,7 +1,7 @@
 /*
  * pgntags.c -- Functions to manage PGN tags
  *
- * Copyright 1995, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Copyright 1995, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * Enhancements Copyright 2005 Alessandro Scotti
  *
@@ -114,8 +114,13 @@ ParsePGNTag (char *tag, GameInfo *gameInfo)
 	success = TRUE;
     } else if (StrCaseCmp(name, "Variant") == 0) {
         /* xboard-defined extension */
-        gameInfo->variant = StringToVariant(value);
-	success = TRUE;
+	success = StrSavePtr(value, &gameInfo->variantName) != NULL;
+        if(*value && strcmp(value, engineVariant)) // keep current engine-defined variant if it matches
+            gameInfo->variant = StringToVariant(value);
+    } else if (StrCaseCmp(name, "VariantMen") == 0) {
+        /* for now ignore this tag, as we have no method yet */
+        /* for assigning the pieces to XBoard pictograms     */
+        success = TRUE;
     } else if (StrCaseCmp(name, PGN_OUT_OF_BOOK) == 0) {
         /* [AS] Out of book annotation */
         success = StrSavePtr(value, &gameInfo->outOfBook) != NULL;
@@ -144,6 +149,7 @@ ParsePGNTag (char *tag, GameInfo *gameInfo)
 void
 PrintPGNTags (FILE *fp, GameInfo *gameInfo)
 {
+    char *p;
     fprintf(fp, "[Event \"%s\"]\n", gameInfo->event ? gameInfo->event : "?");
     fprintf(fp, "[Site \"%s\"]\n", gameInfo->site ? gameInfo->site : "?");
     fprintf(fp, "[Date \"%s\"]\n", gameInfo->date ? gameInfo->date : "?");
@@ -159,6 +165,8 @@ PrintPGNTags (FILE *fp, GameInfo *gameInfo)
 	fprintf(fp, "[TimeControl \"%s\"]\n", gameInfo->timeControl);
     if (gameInfo->variant != VariantNormal)
         fprintf(fp, "[Variant \"%s\"]\n", VariantName(gameInfo->variant));
+    if (*(p = CollectPieceDescriptors()))
+        fprintf(fp, "[VariantMen \"%s\"]\n", p);
     if (gameInfo->extraTags)
 	fputs(gameInfo->extraTags, fp);
 }

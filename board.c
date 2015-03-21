@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * The following terms apply to Digital Equipment Corporation's copyright
  * interest in XBoard:
@@ -599,22 +599,30 @@ void
 AnimateMove (Board board, int fromX, int fromY, int toX, int toY)
 {
   ChessSquare piece;
-  int hop;
+  int hop, x = toX, y = toY;
   Pnt      start, finish, mid;
   Pnt      frames[kFactor * 2 + 1];
   int	      nFrames, startColor, endColor;
+
+  if(killX >= 0 && IS_LION(board[fromY][fromX])) Roar();
 
   /* Are we animating? */
   if (!appData.animate || appData.blindfold)
     return;
 
   if(board[toY][toX] == WhiteRook && board[fromY][fromX] == WhiteKing ||
-     board[toY][toX] == BlackRook && board[fromY][fromX] == BlackKing)
+     board[toY][toX] == BlackRook && board[fromY][fromX] == BlackKing ||
+     board[toY][toX] == WhiteKing && board[fromY][fromX] == WhiteRook || // [HGM] seirawan
+     board[toY][toX] == BlackKing && board[fromY][fromX] == BlackRook)
 	return; // [HGM] FRC: no animtion of FRC castlings, as to-square is not true to-square
 
   if (fromY < 0 || fromX < 0 || toX < 0 || toY < 0) return;
   piece = board[fromY][fromX];
   if (piece >= EmptySquare) return;
+
+  if(killX >= 0) toX = killX, toY = killY; // [HGM] lion: first to kill square
+
+again:
 
 #if DONT_HOP
   hop = FALSE;
@@ -653,6 +661,8 @@ AnimateMove (Board board, int fromX, int fromY, int toX, int toY)
 
   /* Be sure end square is redrawn */
   damage[0][toY][toX] |= True;
+
+  if(toX != x || toY != y) { fromX = toX; fromY = toY; toX = x; toY = y; goto again; } // second leg
 }
 
 void
@@ -817,6 +827,7 @@ DrawSquare (int row, int column, ChessSquare piece, int do_flash)
 	snprintf(tString, 3, "%d", piece);
 	align = 4; // holdings count in upper-left corner
     }
+    if(piece == DarkSquare) square_color = 2;
     if(square_color == 2 || appData.blindfold) piece = EmptySquare;
 
     if (do_flash && piece != EmptySquare && appData.flashCount > 0) {
