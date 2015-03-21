@@ -44,7 +44,7 @@ BEGIN
     LTEXT           "Chessboard for Windows",400,25,15,121,8
     LTEXT           "Copyright 1991 Digital Equipment Corporation",201,6,34,
                     149,8
-    LTEXT           "Enhancements Copyright 1992-2013  Free Software Foundation",
+    LTEXT           "Enhancements Copyright 1992-2014  Free Software Foundation",
                     OPT_TCtext1,6,45,121,17
     CONTROL         "",OPT_TCTime,"Static",SS_BLACKRECT,4,28,159,1
     LTEXT           "WinBoard 0.0.0",ABOUTBOX_Version,25,5,160,8
@@ -90,7 +90,7 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,195,190,40,14
 END
 
-DLG_LoadOptions DIALOG DISCARDABLE  10, 18, 170, 261
+DLG_LoadOptions DIALOG DISCARDABLE  10, 18, 170, 281
 STYLE DS_MODALFRAME | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
 CAPTION "Load Game Options"
 FONT 8, "MS Sans Serif"
@@ -108,25 +108,27 @@ BEGIN
     EDITTEXT        OPT_date,16,90,28,14,ES_AUTOHSCROLL
     LTEXT           "co&nsecutive positions",OPT_Stretcht,46,114,94,8,NOT WS_GROUP
     EDITTEXT        OPT_Stretch,16,110,28,14,ES_AUTOHSCROLL
+    LTEXT           "final piece count",OPT_Ranget,46,134,94,8,NOT WS_GROUP
+    EDITTEXT        OPT_Counts,16,130,28,14,ES_AUTOHSCROLL
     CONTROL         "Match exact &position",OPT_Exact,"Button",
-                    BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,6,136,159,10
+                    BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,6,156,159,10
     CONTROL         "Match if position is s&ubset",OPT_Subset,"Button",
-                    BS_AUTORADIOBUTTON | WS_TABSTOP,6,149,159,10
+                    BS_AUTORADIOBUTTON | WS_TABSTOP,6,169,159,10
     CONTROL         "Match material with e&xact pawn structure",OPT_Struct,"Button",
-                    BS_AUTORADIOBUTTON | WS_TABSTOP,6,162,159,10
+                    BS_AUTORADIOBUTTON | WS_TABSTOP,6,182,159,10
     CONTROL         "Match &material",OPT_Material,"Button",
-                    BS_AUTORADIOBUTTON | WS_TABSTOP,6,175,159,10
+                    BS_AUTORADIOBUTTON | WS_TABSTOP,6,195,159,10
     CONTROL         "Material &range (upper board-half is optional)",OPT_Range,"Button",
-                    BS_AUTORADIOBUTTON | WS_TABSTOP,6,188,159,10
+                    BS_AUTORADIOBUTTON | WS_TABSTOP,6,208,159,10
     CONTROL         "Material &difference (optional material balanced)",OPT_Difference,"Button",
-                    BS_AUTORADIOBUTTON | WS_TABSTOP,6,201,159,10
-    GROUPBOX        "Search Mode: ",OPT_SearchMode,3,126,164,87,WS_GROUP
+                    BS_AUTORADIOBUTTON | WS_TABSTOP,6,221,159,10
+    GROUPBOX        "Search Mode: ",OPT_SearchMode,3,146,164,87,WS_GROUP
     CONTROL         "Also match reversed &colors",OPT_Reversed,"Button",
-                    BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP,4,214,160,10
+                    BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP,4,234,160,10
     CONTROL         "Also match &left-right mirror image",OPT_Mirror,"Button",
-                    BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP,4,227,160,10
-    PUSHBUTTON      "OK",IDOK,56,242,50,14,WS_GROUP
-    PUSHBUTTON      "Cancel",IDCANCEL,112,242,50,14
+                    BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP,4,247,160,10
+    PUSHBUTTON      "OK",IDOK,56,262,50,14,WS_GROUP
+    PUSHBUTTON      "Cancel",IDCANCEL,112,262,50,14
 END
 
 DLG_SaveOptions DIALOG DISCARDABLE  6, 17, 218, 119
@@ -248,7 +250,7 @@ BEGIN
     RTEXT           "Chessboard for Windows",IDC_ChessBoard,196,154,80,8
     LTEXT           "Copyright 1991 Digital Equipment Corporation",201,4,168,
                     151,8
-    LTEXT           "Enhancements Copyright 1992-2013   Free Software Foundation",
+    LTEXT           "Enhancements Copyright 1992-2014   Free Software Foundation",
                     OPT_TCtext1,4,179,126,17
     CONTROL         "",OPT_TCTime,"Static",SS_BLACKRECT,4,164,272,1
     LTEXT           "WinBoard 0.0.0",ABOUTBOX_Version,4,154,64,8
@@ -275,16 +277,17 @@ BEGIN
     EDITTEXT        IDC_GameListFilter,201,136,78,14,ES_AUTOHSCROLL
 END
 
-DLG_EditTags DIALOG DISCARDABLE  6, 18, 167, 140
+DLG_EditTags DIALOG DISCARDABLE  6, 18, 223, 140
 STYLE WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
 CAPTION "Edit Tags"
 FONT 8, "MS Sans Serif"
 BEGIN
-    PUSHBUTTON      "OK",IDOK,58,122,50,14
-    PUSHBUTTON      "Cancel",OPT_TagsCancel,114,122,50,14
+    PUSHBUTTON      "OK",IDOK,114,122,50,14
+    PUSHBUTTON      "Cancel",OPT_TagsCancel,170,122,50,14
+    PUSHBUTTON      "Save",OPT_TagsSave,58,122,50,14
     CONTROL         "",OPT_TagsText,"RICHEDIT",ES_MULTILINE | ES_AUTOVSCROLL | 
                     ES_AUTOHSCROLL | ES_WANTRETURN | WS_BORDER | WS_VSCROLL | 
-                    WS_HSCROLL | WS_TABSTOP,2,2,162,115
+                    WS_HSCROLL | WS_TABSTOP,2,2,218,115
     PUSHBUTTON      "&Edit",OPT_EditTags,2,122,50,14
 END
 
@@ -444,7 +447,7 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,208,86,50,14
 END
 
-DLG_GeneralOptions DIALOG DISCARDABLE  0, 0, 300, 197
+DLG_GeneralOptions DIALOG DISCARDABLE  0, 0, 300, 225
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "General Options"
 FONT 8, "MS Sans Serif"
@@ -497,8 +500,18 @@ BEGIN
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,4,160,151,10
     CONTROL         "One-Click Move",OPT_SmartMove,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,156,160,151,10
-    DEFPUSHBUTTON   "OK",IDOK,180,178,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,236,178,50,14
+    CONTROL         "auto-Display Tags",OPT_AutoTags,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,4,174,151,10
+    CONTROL         "auto-Display Comment",OPT_AutoComment,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,156,174,151,10
+    CONTROL         "Headers in Engine Output",OPT_Headers,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,4,188,151,10
+    CONTROL         "Enable Variation Trees",OPT_Variations,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,156,188,151,10
+    CONTROL         "Play Analysis PV on Click",OPT_AutoExtend,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,4,202,151,10
+    DEFPUSHBUTTON   "OK",IDOK,180,206,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,236,206,50,14
 END
 
 DLG_IcsOptions DIALOGEX 0, 0, 302, 268
@@ -708,6 +721,8 @@ BEGIN
                     70,10
     CONTROL         "&atomic",OPT_VariantAtomic,"Button",BS_AUTORADIOBUTTON,
                     9,104,70,10
+    CONTROL         "&Mighty Lion",OPT_VariantLion,"Button",BS_AUTORADIOBUTTON,
+                    9,114,70,10
     CONTROL         "cra&zyhouse",OPT_VariantCrazyhouse,"Button",BS_AUTORADIOBUTTON,80,14,
                     70,10
     CONTROL         "&bughouse",OPT_VariantBughouse,"Button",BS_AUTORADIOBUTTON,80,24,70,
@@ -728,6 +743,8 @@ BEGIN
                     94,70,10
     CONTROL         "&makruk",OPT_VariantMakruk,"Button",BS_AUTORADIOBUTTON,80,
                     104,70,10
+    CONTROL         "&ASEAN",OPT_VariantASEAN,"Button",BS_AUTORADIOBUTTON,80,
+                    114,70,10
     CONTROL         "&gothic",OPT_VariantGothic,"Button",BS_AUTORADIOBUTTON,154,14,
                     70,10
     CONTROL         "&capablanca",OPT_VariantCapablanca,"Button",BS_AUTORADIOBUTTON,154,
@@ -750,16 +767,25 @@ BEGIN
                     10
     CONTROL         "&xiangqi",OPT_VariantXiangqi,"Button",BS_AUTORADIOBUTTON,154,114,70,
                     10
-    GROUPBOX        "Variant",GPB_Variant,4,4,215,125
-    LTEXT           "Board size:",GPB_Board,10,165,40,8,WS_TABSTOP
-    LTEXT           "ranks",IDC_Height,77,165,38,8
-    EDITTEXT        IDC_Ranks,60,161,14,14,ES_AUTOHSCROLL
-    LTEXT           "files",IDC_Width,133,165,80,8
-    EDITTEXT        IDC_Files,116,161,14,14,ES_AUTOHSCROLL
-    LTEXT           "Holdings with room for:",IDC_Hand,10,183,90,8
-    EDITTEXT        IDC_Holdings,93,179,14,14,ES_AUTOHSCROLL
-    LTEXT           "pieces",IDC_Pieces,110,183,100,8
-    LTEXT           "('-1' means defaults for selected variant)",IDC_Def,10,201,210,8
+    CONTROL         "",OPT_EngineVariant+0,"Button",BS_AUTORADIOBUTTON,9,134,70,10
+    CONTROL         "",OPT_EngineVariant+1,"Button",BS_AUTORADIOBUTTON,80,134,70,10
+    CONTROL         "",OPT_EngineVariant+2,"Button",BS_AUTORADIOBUTTON,154,134,70,10
+    CONTROL         "",OPT_EngineVariant+3,"Button",BS_AUTORADIOBUTTON,9,144,70,10
+    CONTROL         "",OPT_EngineVariant+4,"Button",BS_AUTORADIOBUTTON,80,144,70,10
+    CONTROL         "",OPT_EngineVariant+5,"Button",BS_AUTORADIOBUTTON,154,144,70,10
+    CONTROL         "",OPT_EngineVariant+6,"Button",BS_AUTORADIOBUTTON,9,154,70,10
+    CONTROL         "",OPT_EngineVariant+7,"Button",BS_AUTORADIOBUTTON,80,154,70,10
+    CONTROL         "",OPT_EngineVariant+8,"Button",BS_AUTORADIOBUTTON,154,154,70,10
+    GROUPBOX        "Variant",GPB_Variant,4,4,215,165
+    LTEXT           "Board size:",GPB_Board,10,183,40,8,WS_TABSTOP
+    LTEXT           "ranks",IDC_Height,77,183,38,8
+    EDITTEXT        IDC_Ranks,60,179,14,14,ES_AUTOHSCROLL
+    LTEXT           "files",IDC_Width,133,183,80,8
+    EDITTEXT        IDC_Files,116,179,14,14,ES_AUTOHSCROLL
+    LTEXT           "Holdings with room for:",IDC_Hand,10,201,90,8
+    EDITTEXT        IDC_Holdings,93,197,14,14,ES_AUTOHSCROLL
+    LTEXT           "pieces",IDC_Pieces,110,201,100,8
+    LTEXT           "('-1' means defaults for selected variant)",IDC_Def,10,217,210,8
     DEFPUSHBUTTON   "OK",IDOK,114,232,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,170,232,50,14
 END
@@ -975,6 +1001,8 @@ BEGIN
     PUSHBUTTON      "...",IDC_BrowseForEGTB,226,40,17,14
     LTEXT           "EGTB Size (MB):",IDC_Cache,2,62,78,8
     EDITTEXT        IDC_SizeOfEGTB,82,58,40,14,ES_AUTOHSCROLL
+    CONTROL         "Ponder Next Move",OPT_PonderNextMove,"Button",BS_AUTOCHECKBOX | 
+                    WS_TABSTOP,136,62,100,10
     CONTROL         "Use Book:",IDC_UseBook,"Button",BS_AUTOCHECKBOX | 
                     WS_TABSTOP,2,80,78,10
     EDITTEXT        IDC_BookFile,82,76,140,14,ES_AUTOHSCROLL
@@ -1166,6 +1194,7 @@ BEGIN
         MENUITEM "S&ave Position...\tCtrl+Shift+S",IDM_SavePosition
         MENUITEM SEPARATOR
         MENUITEM "Save as &Diagram...",         IDM_SaveDiagram
+        MENUITEM "Save Selected Games...",      IDM_SaveSelected
         MENUITEM "Save Games to &Book",         IDM_CreateBook
         MENUITEM SEPARATOR
         MENUITEM "&Quit",                       IDM_Exit
@@ -1900,6 +1929,7 @@ V72O                    BITMAP  MOVEABLE PURE   "bitmaps/v72o.bmp"
 S72O                    BITMAP  MOVEABLE PURE   "bitmaps/s72o.bmp"
 L72O                    BITMAP  MOVEABLE PURE   "bitmaps/l72o.bmp"
 DK72O                   BITMAP  MOVEABLE PURE   "bitmaps/dk72o.bmp"
+LN72O                   BITMAP  MOVEABLE PURE   "bitmaps/ln72o.bmp"
 WP72O                   BITMAP  MOVEABLE PURE   "bitmaps/wp72o.bmp"
 WN72O                   BITMAP  MOVEABLE PURE   "bitmaps/wn72o.bmp"
 WL72O                   BITMAP  MOVEABLE PURE   "bitmaps/wl72o.bmp"
@@ -1920,6 +1950,7 @@ V72S                    BITMAP  MOVEABLE PURE   "bitmaps/v72s.bmp"
 S72S                    BITMAP  MOVEABLE PURE   "bitmaps/s72s.bmp"
 L72S                    BITMAP  MOVEABLE PURE   "bitmaps/l72s.bmp"
 DK72S                   BITMAP  MOVEABLE PURE   "bitmaps/dk72s.bmp"
+LN72S                   BITMAP  MOVEABLE PURE   "bitmaps/ln72s.bmp"
 WP72S                   BITMAP  MOVEABLE PURE   "bitmaps/wp72s.bmp"
 WN72S                   BITMAP  MOVEABLE PURE   "bitmaps/wn72s.bmp"
 WL72S                   BITMAP  MOVEABLE PURE   "bitmaps/wl72s.bmp"
@@ -1940,6 +1971,7 @@ V72W                    BITMAP  MOVEABLE PURE   "bitmaps/v72w.bmp"
 S72W                    BITMAP  MOVEABLE PURE   "bitmaps/s72w.bmp"
 L72W                    BITMAP  MOVEABLE PURE   "bitmaps/l72w.bmp"
 DK72W                   BITMAP  MOVEABLE PURE   "bitmaps/dk72w.bmp"
+LN72W                   BITMAP  MOVEABLE PURE   "bitmaps/ln72w.bmp"
 E49O                    BITMAP  MOVEABLE PURE   "bitmaps/e49o.bmp"
 A49O                    BITMAP  MOVEABLE PURE   "bitmaps/a49o.bmp"
 AA49O                   BITMAP  MOVEABLE PURE   "bitmaps/as49o.bmp"
@@ -1956,6 +1988,7 @@ V49O                    BITMAP  MOVEABLE PURE   "bitmaps/v49o.bmp"
 S49O                    BITMAP  MOVEABLE PURE   "bitmaps/s49o.bmp"
 L49O                    BITMAP  MOVEABLE PURE   "bitmaps/l49o.bmp"
 DK49O                   BITMAP  MOVEABLE PURE   "bitmaps/dk49o.bmp"
+LN49O                   BITMAP  MOVEABLE PURE   "bitmaps/ln49o.bmp"
 WP49O                   BITMAP  MOVEABLE PURE   "bitmaps/wp49o.bmp"
 WN49O                   BITMAP  MOVEABLE PURE   "bitmaps/wn49o.bmp"
 WL49O                   BITMAP  MOVEABLE PURE   "bitmaps/wl49o.bmp"
@@ -1976,6 +2009,7 @@ V49S                    BITMAP  MOVEABLE PURE   "bitmaps/v49s.bmp"
 S49S                    BITMAP  MOVEABLE PURE   "bitmaps/s49s.bmp"
 L49S                    BITMAP  MOVEABLE PURE   "bitmaps/l49s.bmp"
 DK49S                   BITMAP  MOVEABLE PURE   "bitmaps/dk49s.bmp"
+LN49S                   BITMAP  MOVEABLE PURE   "bitmaps/ln49s.bmp"
 WP49S                   BITMAP  MOVEABLE PURE   "bitmaps/wp49s.bmp"
 WN49S                   BITMAP  MOVEABLE PURE   "bitmaps/wn49s.bmp"
 WL49S                   BITMAP  MOVEABLE PURE   "bitmaps/wl49s.bmp"
@@ -1996,6 +2030,7 @@ V49W                    BITMAP  MOVEABLE PURE   "bitmaps/v49w.bmp"
 S49W                    BITMAP  MOVEABLE PURE   "bitmaps/s49w.bmp"
 L49W                    BITMAP  MOVEABLE PURE   "bitmaps/l49w.bmp"
 DK49W                   BITMAP  MOVEABLE PURE   "bitmaps/dk49w.bmp"
+LN49W                   BITMAP  MOVEABLE PURE   "bitmaps/ln49w.bmp"
 A33O                    BITMAP  MOVEABLE PURE   "bitmaps/a33o.bmp"
 AA33O                   BITMAP  MOVEABLE PURE   "bitmaps/as33o.bmp"
 C33O                    BITMAP  MOVEABLE PURE   "bitmaps/c33o.bmp"
@@ -2010,6 +2045,7 @@ W33O                    BITMAP  MOVEABLE PURE   "bitmaps/w33o.bmp"
 M33O                    BITMAP  MOVEABLE PURE   "bitmaps/m33o.bmp"
 O33O                    BITMAP  MOVEABLE PURE   "bitmaps/o33o.bmp"
 DK33O                   BITMAP  MOVEABLE PURE   "bitmaps/dk33o.bmp"
+LN33O                   BITMAP  MOVEABLE PURE   "bitmaps/ln33o.bmp"
 WP33O                   BITMAP  MOVEABLE PURE   "bitmaps/wp33o.bmp"
 WN33O                   BITMAP  MOVEABLE PURE   "bitmaps/wn33o.bmp"
 WL33O                   BITMAP  MOVEABLE PURE   "bitmaps/wl33o.bmp"
@@ -2028,6 +2064,7 @@ W33W                    BITMAP  MOVEABLE PURE   "bitmaps/w33w.bmp"
 M33W                    BITMAP  MOVEABLE PURE   "bitmaps/m33w.bmp"
 O33W                    BITMAP  MOVEABLE PURE   "bitmaps/o33w.bmp"
 DK33W                   BITMAP  MOVEABLE PURE   "bitmaps/dk33w.bmp"
+LN33W                   BITMAP  MOVEABLE PURE   "bitmaps/ln33w.bmp"
 A33S                    BITMAP  MOVEABLE PURE   "bitmaps/a33s.bmp"
 AA33S                   BITMAP  MOVEABLE PURE   "bitmaps/as33s.bmp"
 C33S                    BITMAP  MOVEABLE PURE   "bitmaps/c33s.bmp"
@@ -2042,6 +2079,7 @@ W33S                    BITMAP  MOVEABLE PURE   "bitmaps/w33s.bmp"
 M33S                    BITMAP  MOVEABLE PURE   "bitmaps/m33s.bmp"
 O33S                    BITMAP  MOVEABLE PURE   "bitmaps/o33s.bmp"
 DK33S                   BITMAP  MOVEABLE PURE   "bitmaps/dk33s.bmp"
+LN33S                   BITMAP  MOVEABLE PURE   "bitmaps/ln33s.bmp"
 WP33S                   BITMAP  MOVEABLE PURE   "bitmaps/wp33s.bmp"
 WN33S                   BITMAP  MOVEABLE PURE   "bitmaps/wn33s.bmp"
 WL33S                   BITMAP  MOVEABLE PURE   "bitmaps/wl33s.bmp"
@@ -2208,6 +2246,7 @@ SSHOUT                  WAVE    DISCARDABLE     "sounds/sshout.wav"
 TELL                    WAVE    DISCARDABLE     "sounds/tell.wav"
 UNFINISHED              WAVE    DISCARDABLE     "sounds/unfinished.wav"
 WIN                     WAVE    DISCARDABLE     "sounds/win.wav"
+ROAR                    WAVE    DISCARDABLE     "sounds/roar.wav"
 
 /////////////////////////////////////////////////////////////////////////////
 //

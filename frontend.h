@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * Enhancements Copyright 2005 Alessandro Scotti
  *
@@ -93,13 +93,14 @@ void DrawSeekDot P((int x, int y, int color));
 void PopUpMoveDialog P((char first));
 
 void RingBell P((void));
+int  Roar P((void));
 void PlayIcsWinSound P((void));
 void PlayIcsLossSound P((void));
 void PlayIcsDrawSound P((void));
 void PlayIcsUnfinishedSound P((void));
 void PlayAlarmSound P((void));
 void PlayTellSound P((void));
-void PlaySoundFile P((char *name));
+int  PlaySoundFile P((char *name));
 void PlaySoundByColor P((void));
 void EchoOn P((void));
 void EchoOff P((void));
@@ -107,6 +108,7 @@ void Raw P((void));
 void Colorize P((ColorClass cc, int continuation));
 char *InterpretFileName P((char *name, char *dir));
 void DoSleep P((int n));
+void DoEvents P((void));
 
 char *UserName P((void));
 char *HostName P((void));
@@ -128,7 +130,7 @@ DelayedEventCallback GetDelayedEvent P((void));
 void CancelDelayedEvent P((void));
 // [HGM] mouse: next six used by mouse handler, which was moved to backend
 extern int fromX, fromY, toX, toY;
-void PromotionPopUp P((void));
+void PromotionPopUp P((char choice));
 void DragPieceBegin P((int x, int y, Boolean instantly));
 void DragPieceEnd P((int x, int y));
 void DragPieceMove P((int x, int y));
@@ -178,6 +180,7 @@ void GameListPopUp P((FILE *fp, char *filename));
 void GameListPopDown P((void));
 void GameListHighlight P((int index));
 void GameListDestroy P((void));
+void GameListUpdate P((void));
 FILE *GameFile P((void));
 
 /* these are in wedittags.c */
@@ -215,7 +218,7 @@ void EnableNamedMenuItem P((char *menuRef, int state));
 typedef struct FrontEndProgramStats_TAG {
     int which;
     int depth;
-    unsigned long nodes;
+    u64 nodes;
     int score;
     int time;
     char * pv;

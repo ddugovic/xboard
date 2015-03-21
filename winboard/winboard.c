@@ -2,10 +2,10 @@
  * WinBoard.c -- Windows NT front end to XBoard
  *
  * Copyright 1991 by Digital Equipment Corporation, Maynard,
- * Massachusetts. 
+ * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * Enhancements Copyright 2005 Alessandro Scotti
  *
@@ -92,6 +92,9 @@
 #include "help.h"
 #include "wsnap.h"
 
+#define SLASH '/'
+#define DATADIR "~~"
+
 //void InitEngineUCI( const char * iniDir, ChessProgramState * cps );
 
   int myrandom(void);
@@ -109,7 +112,6 @@ VOID NewVariantPopup(HWND hwnd);
 int FinishMove P((ChessMove moveType, int fromX, int fromY, int toX, int toY,
 		   /*char*/int promoChar));
 void DisplayMove P((int moveNumber));
-Boolean ParseFEN P((Board board, int *blackPlaysFirst, char *fen));
 void ChatPopUp P((char *s));
 typedef struct {
   ChessSquare piece;  
@@ -164,7 +166,7 @@ BoardSize boardSize;
 Boolean chessProgram;
 //static int boardX, boardY;
 int  minX, minY; // [HGM] placement: volatile limits on upper-left corner
-int squareSize, lineGap, minorSize, border;
+int squareSize, lineGap, minorSize;
 static int winW, winH;
 static RECT messageRect, whiteRect, blackRect, leftLogoRect, rightLogoRect; // [HGM] logo
 static int logoHeight = 0;
@@ -187,6 +189,7 @@ Boolean alwaysOnTop = FALSE;
 RECT boardRect;
 COLORREF lightSquareColor, darkSquareColor, whitePieceColor, 
   blackPieceColor, highlightSquareColor, premoveHighlightColor;
+COLORREF markerColor[8] = { 0x00FFFF, 0x0000FF, 0x00FF00, 0xFF0000, 0xFFFF00, 0xFF00FF, 0xFFFFFF, 0x000000 };
 HPALETTE hPal;
 ColorClass currentColorClass;
 
@@ -197,7 +200,7 @@ static HBITMAP pieceBitmap[3][(int) BlackPawn]; /* [HGM] nr of bitmaps referred 
 static HBRUSH lightSquareBrush, darkSquareBrush,
   blackSquareBrush, /* [HGM] for band between board and holdings */
   explodeBrush,     /* [HGM] atomic */
-  markerBrush,      /* [HGM] markers */
+  markerBrush[8],   /* [HGM] markers */
   whitePieceBrush, blackPieceBrush, iconBkgndBrush /*, outlineBrush*/;
 static POINT gridEndpoints[(BOARD_RANKS + BOARD_FILES + 2) * 2];
 static DWORD gridVertexCounts[BOARD_RANKS + BOARD_FILES + 2];
@@ -222,6 +225,7 @@ static struct { int x; int y; int mode; } backTextureSquareInfo[BOARD_RANKS][BOA
 #if __GNUC__ && !defined(_winmajor)
 #define oldDialog 0 /* cygwin doesn't define _winmajor; mingw does */
 #else
+
 #if defined(_winmajor)
 #define oldDialog (_winmajor < 4)
 #else
@@ -256,7 +260,8 @@ int dialogItems[][42] = {
 { DLG_TimeControl, IDC_Babble, OPT_TCUseMoves, OPT_TCUseInc, OPT_TCUseFixed, 
   OPT_TCtext1, OPT_TCtext2, OPT_TCitext1, OPT_TCitext2, OPT_TCftext, GPB_Factors,   IDC_Factor1, IDC_Factor2, IDOK, IDCANCEL }, 
 { DLG_LoadOptions, OPT_Autostep, OPT_AStext1, OPT_Exact, OPT_Subset, OPT_Struct, OPT_Material, OPT_Range, OPT_Difference,
-  OPT_elo1t, OPT_elo2t, OPT_datet, OPT_Stretch, OPT_Stretcht, OPT_Reversed, OPT_SearchMode, OPT_Mirror, OPT_thresholds, IDOK, IDCANCEL }, 
+  OPT_elo1t, OPT_elo2t, OPT_datet, OPT_Stretch, OPT_Stretcht, OPT_Reversed, OPT_SearchMode, OPT_Mirror, OPT_thresholds,
+  OPT_Ranget, IDOK, IDCANCEL }, 
 { DLG_SaveOptions, OPT_Autosave, OPT_AVPrompt, OPT_AVToFile, OPT_AVBrowse,
   801, OPT_PGN, OPT_Old, OPT_OutOfBookInfo, IDOK, IDCANCEL }, 
 { 1536, 1090, IDC_Directories, 1089, 1091, IDOK, IDCANCEL, 1038, IDC_IndexNr, 1037 }, 
@@ -781,12 +786,14 @@ void ThawUI()
  *
 \*---------------------------------------------------------------------------*/
 
+static void HandleMessage P((MSG *message));
+static HANDLE hAccelMain, hAccelNoAlt, hAccelNoICS;
+
 int APIENTRY
 WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	LPSTR lpCmdLine, int nCmdShow)
 {
   MSG msg;
-  HANDLE hAccelMain, hAccelNoAlt, hAccelNoICS;
 //  INITCOMMONCONTROLSEX ex;
 
   debugFP = stderr;
@@ -818,6 +825,17 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		    0,    /* lowest message to examine */
 		    0))   /* highest message to examine */
     {
+	HandleMessage(&msg);
+    }
+
+
+  return (msg.wParam);	/* Returns the value from PostQuitMessage */
+}
+
+static void
+HandleMessage (MSG *message)
+{
+    MSG msg = *message;
 
       if(msg.message == WM_CHAR && msg.wParam == '\t') {
 	// [HGM] navigate: switch between all windows with tab
@@ -885,7 +903,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	  if(currentElement < 5 && IsIconic(hwndMain))    ShowWindow(hwndMain, SW_RESTORE); // all open together
 	  SetFocus(h);
 
-	  continue; // this message now has been processed
+	  return; // this message now has been processed
 	}
       }
 
@@ -904,14 +922,24 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	    if(chatHandle[i] && IsDialogMessage(chatHandle[i], &msg)) {
 		done = 1; break;
 	}
-	if(done) continue; // [HGM] chat: end patch
+	if(done) return; // [HGM] chat: end patch
 	TranslateMessage(&msg);	/* Translates virtual key codes */
 	DispatchMessage(&msg);	/* Dispatches message to window */
       }
+}
+
+void
+DoEvents ()
+{ /* Dispatch pending messages */
+  MSG msg;
+  while (PeekMessage(&msg, /* message structure */
+		     NULL, /* handle of window receiving the message */
+		     0,    /* lowest message to examine */
+		     0,    /* highest message to examine */
+		     PM_REMOVE))
+    {
+	HandleMessage(&msg);
     }
-
-
-  return (msg.wParam);	/* Returns the value from PostQuitMessage */
 }
 
 /*---------------------------------------------------------------------------*\
@@ -980,16 +1008,17 @@ InitApplication(HINSTANCE hInstance)
 
 /* Set by InitInstance, used by EnsureOnScreen */
 int screenHeight, screenWidth;
+RECT screenGeometry;
 
 void
 EnsureOnScreen(int *x, int *y, int minX, int minY)
 {
 //  int gap = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CYCAPTION);
   /* Be sure window at (x,y) is not off screen (or even mostly off screen) */
-  if (*x > screenWidth - 32) *x = 0;
-  if (*y > screenHeight - 32) *y = 0;
-  if (*x < minX) *x = minX;
-  if (*y < minY) *y = minY;
+  if (*x > screenGeometry.right - 32) *x = screenGeometry.left;
+  if (*y > screenGeometry.bottom - 32) *y = screenGeometry.top;
+  if (*x < screenGeometry.left + minX) *x = screenGeometry.left + minX;
+  if (*y < screenGeometry.top + minY) *y = screenGeometry.top + minY;
 }
 
 VOID
@@ -1050,6 +1079,32 @@ InitTextures()
   }
 }
 
+#ifndef SM_CXVIRTUALSCREEN
+#define SM_CXVIRTUALSCREEN 78
+#endif
+#ifndef SM_CYVIRTUALSCREEN
+#define SM_CYVIRTUALSCREEN 79
+#endif
+#ifndef SM_XVIRTUALSCREEN 
+#define SM_XVIRTUALSCREEN 76
+#endif
+#ifndef SM_YVIRTUALSCREEN 
+#define SM_YVIRTUALSCREEN 77
+#endif
+
+VOID
+InitGeometry()
+{
+  screenHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+  if( !screenHeight ) screenHeight = GetSystemMetrics(SM_CYSCREEN);
+  screenWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+  if( !screenWidth ) screenWidth = GetSystemMetrics(SM_CXSCREEN);
+  screenGeometry.left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+  screenGeometry.top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+  screenGeometry.right = screenGeometry.left + screenWidth;
+  screenGeometry.bottom = screenGeometry.top + screenHeight;
+}
+
 BOOL
 InitInstance(HINSTANCE hInstance, int nCmdShow, LPSTR lpCmdLine)
 {
@@ -1068,7 +1123,7 @@ InitInstance(HINSTANCE hInstance, int nCmdShow, LPSTR lpCmdLine)
     GetCurrentDirectory(MSG_SIZ, installDir);
   }
   gameInfo.boardWidth = gameInfo.boardHeight = 8; // [HGM] won't have open window otherwise
-  screenWidth = screenHeight = 1000; // [HGM] placement: kludge to allow calling EnsureOnScreen from InitAppData
+  InitGeometry();
   InitAppData(lpCmdLine);      /* Get run-time parameters */
   /* xboard, and older WinBoards, controlled the move sound with the
      appData.ringBellAfterMoves option.  In the current WinBoard, we
@@ -1115,8 +1170,8 @@ InitInstance(HINSTANCE hInstance, int nCmdShow, LPSTR lpCmdLine)
   iconBlack = LoadIcon(hInstance, "icon_black");
   iconCurrent = iconWhite;
   InitDrawingColors();
-  screenHeight = GetSystemMetrics(SM_CYSCREEN);
-  screenWidth = GetSystemMetrics(SM_CXSCREEN);
+
+  InitPosition(0); // to set nr of ranks and files, which might be non-default through command-line args
   for (ibs = (int) NUM_SIZES - 1; ibs >= 0; ibs--) {
     /* Compute window size for each board size, and use the largest
        size that fits on this screen as the default. */
@@ -1196,6 +1251,7 @@ InitMenuChecks()
   (void) CheckMenuItem(hmenu, IDM_SaveSettingsOnExit,
 		       MF_BYCOMMAND|(saveSettingsOnExit ?
 				     MF_CHECKED : MF_UNCHECKED));
+  EnableMenuItem(hmenu, IDM_SaveSelected, MF_GRAYED);
 }
 
 //---------------------------------------------------------------------------------------------------------
@@ -1226,6 +1282,7 @@ LFfromMFP(LOGFONT* lf, MyFontParams *mfp)
   lf->lfStrikeOut = mfp->strikeout;
   lf->lfCharSet = mfp->charset;
   lf->lfOutPrecision = OUT_DEFAULT_PRECIS;
+
   lf->lfClipPrecision = CLIP_DEFAULT_PRECIS;
   lf->lfQuality = DEFAULT_QUALITY;
   lf->lfPitchAndFamily = DEFAULT_PITCH|FF_DONTCARE;
@@ -1779,6 +1836,8 @@ static void CreatePieceMaskFromFont( HDC hdc_window, HDC hdc, int index )
     COLORREF chroma = RGB(0xFF,0x00,0xFF);
     RECT rc;
     SIZE sz;
+
+
     POINT pt;
     int backColor = whitePieceColor; 
     int foreColor = blackPieceColor;
@@ -2162,6 +2221,7 @@ InsertInPalette(COLORREF color)
 VOID
 InitDrawingColors()
 {
+  int i;
   if (pLogPal == NULL) {
     /* Allocate enough memory for a logical palette with
      * PALETTESIZE entries and set the size and version fields
@@ -2193,8 +2253,9 @@ InitDrawingColors()
   blackPieceBrush = CreateSolidBrush(blackPieceColor);
   iconBkgndBrush = CreateSolidBrush(GetSysColor(COLOR_BACKGROUND));
   explodeBrush = CreateSolidBrush(highlightSquareColor); // [HGM] atomic
-  markerBrush = CreateSolidBrush(premoveHighlightColor); // [HGM] markers
-  /* [AS] Force rendering of the font-based pieces */
+    for(i=0; i<8;i++) markerBrush[i] = CreateSolidBrush(markerColor[i]); // [HGM] markers
+
+   /* [AS] Force rendering of the font-based pieces */
   if( fontBitmapSquareSize > 0 ) {
     fontBitmapSquareSize = 0;
   }
@@ -2259,21 +2320,23 @@ InitDrawingSizes(BoardSize boardSize, int flags)
 
   /* [HGM] call with -2 uses old size (for if nr of files, ranks changes) */
   if(boardSize == (BoardSize)(-2) ) boardSize = oldBoardSize;
+  if(boardSize == -1) return;     // no size defined yet; abort (to allow early call of InitPosition)
   oldBoardSize = boardSize;
 
   if(boardSize != SizeMiddling && boardSize != SizePetite && boardSize != SizeBulky && !appData.useFont)
   { // correct board size to one where built-in pieces exist
     if((v == VariantCapablanca || v == VariantGothic || v == VariantGrand || v == VariantCapaRandom || v == VariantJanus || v == VariantSuper)
        && (boardSize < SizePetite || boardSize > SizeBulky) // Archbishop and Chancellor available in entire middle range
+
       || (v == VariantShogi && boardSize != SizeModerate)   // Japanese-style Shogi
       ||  v == VariantKnightmate || v == VariantSChess || v == VariantXiangqi || v == VariantSpartan
-      ||  v == VariantShatranj || v == VariantMakruk || v == VariantGreat || v == VariantFairy ) {
+      ||  v == VariantShatranj || v == VariantMakruk || v == VariantGreat || v == VariantFairy || v == VariantLion ) {
       if(boardSize < SizeMediocre) boardSize = SizePetite; else
       if(boardSize > SizeModerate) boardSize = SizeBulky;  else
                                    boardSize = SizeMiddling;
     }
   }
-  if(!appData.useFont && boardSize == SizePetite && (v == VariantShogi || v == VariantKnightmate)) boardSize = SizeMiddling; // no Unicorn in Petite
+  if(!appData.useFont && boardSize == SizePetite && (v == VariantKnightmate)) boardSize = SizeMiddling; // no Unicorn in Petite
 
   oldRect.left = wpMain.x; //[HGM] placement: remember previous window params
   oldRect.top = wpMain.y;
@@ -2623,8 +2686,11 @@ InitDrawingSizes(BoardSize boardSize, int flags)
     pieceBitmap[0][WhiteUnicorn] = DoLoadBitmap(hInst, "u", squareSize, "s");
     pieceBitmap[1][WhiteUnicorn] = DoLoadBitmap(hInst, "u", squareSize, "o");
     pieceBitmap[2][WhiteUnicorn] = DoLoadBitmap(hInst, "u", squareSize, "w");
+    pieceBitmap[0][WhiteLion] = DoLoadBitmap(hInst, "ln", squareSize, "s");
+    pieceBitmap[1][WhiteLion] = DoLoadBitmap(hInst, "ln", squareSize, "o");
+    pieceBitmap[2][WhiteLion] = DoLoadBitmap(hInst, "ln", squareSize, "w");
 
-    if(gameInfo.variant == VariantShogi) { /* promoted Gold represemtations */
+    if(gameInfo.variant == VariantShogi && BOARD_HEIGHT != 7) { /* promoted Gold representations (but not in Tori!)*/
       pieceBitmap[0][WhiteCannon] = DoLoadBitmap(hInst, "wp", squareSize, "s");
       pieceBitmap[1][WhiteCannon] = DoLoadBitmap(hInst, "wp", squareSize, "o");
       pieceBitmap[2][WhiteCannon] = DoLoadBitmap(hInst, "w", squareSize, "w");
@@ -3244,6 +3310,9 @@ BOOL HasHighlightInfo()
     }
 
     return result;
+
+
+
 }
 
 BOOL IsDrawArrowEnabled()
@@ -3435,6 +3504,7 @@ DrawBoardOnDC(HDC hdc, Board board, HDC tmphdc)
             DisplayHoldingsCount(hdc, x, y, flipView, (int) board[row][column]);
       else if( column == BOARD_RGHT) /* right align */
             DisplayHoldingsCount(hdc, x, y, !flipView, (int) board[row][column]);
+      else if( piece == DarkSquare) DisplayHoldingsCount(hdc, x, y, 0, 0);
       else
       if (appData.monoMode) {
         if (piece == EmptySquare) {
@@ -3617,7 +3687,7 @@ void DrawSeekDot(int x, int y, int color)
 {
 	int square = color & 0x80;
 	HBRUSH oldBrush = SelectObject(hdcSeek, 
-			color == 0 ? markerBrush : color == 1 ? darkSquareBrush : explodeBrush);
+			color == 0 ? markerBrush[1] : color == 1 ? darkSquareBrush : explodeBrush);
 	color &= 0x7F;
 	if(square)
 	    Rectangle(hdcSeek, boardRect.left+x - squareSize/9, boardRect.top+y - squareSize/9,
@@ -3910,8 +3980,7 @@ HDCDrawPosition(HDC hdc, BOOLEAN repaint, Board board)
   for (row = 0; row < BOARD_HEIGHT; row++) {
     for (column = 0; column < BOARD_WIDTH; column++) {
 	if (marker[row][column]) { // marker changes only occur with full repaint!
-	    HBRUSH oldBrush = SelectObject(hdcmem, 
-			marker[row][column] == 2 ? markerBrush : explodeBrush);
+	    HBRUSH oldBrush = SelectObject(hdcmem, markerBrush[marker[row][column]-1]);
 	    SquareToPos(row, column, &x, &y);
 	    Ellipse(hdcmem, x + squareSize/4, y + squareSize/4,
 		  	  x + 3*squareSize/4, y + 3*squareSize/4);
@@ -3937,6 +4006,7 @@ HDCDrawPosition(HDC hdc, BOOLEAN repaint, Board board)
     else
     if(dragInfo.from.x == BOARD_RGHT+1 )
                  board[dragInfo.from.y][dragInfo.from.x-1]++;
+
     board[dragInfo.from.y][dragInfo.from.x] = dragged_piece;
     x = dragInfo.pos.x - squareSize / 2;
     y = dragInfo.pos.y - squareSize / 2;
@@ -4267,8 +4337,10 @@ MouseEvent(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
       } else if (PtInRect((LPRECT) &blackRect, pt)) {
 	ClockClick(!flipClock); break;
       }
+    if(dragging) { // [HGM] lion: don't destroy dragging info if we are already dragging
       dragInfo.start.x = dragInfo.start.y = -1;
       dragInfo.from = dragInfo.start;
+    }
     if(fromX == -1 && frozen) { // not sure where this is for
 		fromX = fromY = -1; 
       DrawPosition(forceFullRepaint || FALSE, NULL); /* [AS] */
@@ -4288,7 +4360,7 @@ MouseEvent(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     if(PromoScroll(pt.x - boardRect.left, pt.y - boardRect.top)) break;
     MovePV(pt.x - boardRect.left, pt.y - boardRect.top, boardRect.bottom - boardRect.top);
     if ((appData.animateDragging || appData.highlightDragging)
-	&& (wParam & MK_LBUTTON)
+	&& (wParam & MK_LBUTTON || dragging == 2)
 	&& dragInfo.from.x >= 0) 
     {
       BOOL full_repaint = FALSE;
@@ -4297,7 +4369,7 @@ MouseEvent(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 	dragInfo.pos = pt;
       }
       if (appData.highlightDragging) {
-	SetHighlights(fromX, fromY, x, y);
+	HoverEvent(highlightInfo.sq[1].x, highlightInfo.sq[1].y, x, y);
         if( IsDrawArrowEnabled() && (x < 0 || x >= BOARD_WIDTH || y < 0 || y >= BOARD_HEIGHT) ) {
             full_repaint = TRUE;
         }
@@ -4432,6 +4504,8 @@ ButtonProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
   return CallWindowProc(buttonDesc[i].wndproc, hwnd, message, wParam, lParam);
 }
 
+static int promoStyle;
+
 /* Process messages for Promotion dialog box */
 LRESULT CALLBACK
 Promotion(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
@@ -4439,6 +4513,7 @@ Promotion(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
   char promoChar;
 
   switch (message) {
+
   case WM_INITDIALOG: /* message: initialize dialog box */
     /* Center the dialog over the application window */
     CenterWindow(hDlg, GetWindow(hDlg, GW_OWNER));
@@ -4462,13 +4537,9 @@ Promotion(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
          PieceToChar(BlackMarshall) != '~')   ) ?
 	       SW_SHOW : SW_HIDE);
     /* [HGM] Hide B & R button in Shogi, use Q as promote, N as defer */
-    ShowWindow(GetDlgItem(hDlg, PB_Rook),
-       gameInfo.variant != VariantShogi ?
-	       SW_SHOW : SW_HIDE);
-    ShowWindow(GetDlgItem(hDlg, PB_Bishop), 
-       gameInfo.variant != VariantShogi ?
-	       SW_SHOW : SW_HIDE);
-    if(gameInfo.variant == VariantShogi) {
+    ShowWindow(GetDlgItem(hDlg, PB_Rook),   !promoStyle ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hDlg, PB_Bishop), !promoStyle ? SW_SHOW : SW_HIDE);
+    if(promoStyle) {
         SetDlgItemText(hDlg, PB_Queen, "YES");
         SetDlgItemText(hDlg, PB_Knight, "NO");
         SetWindowText(hDlg, "Promote?");
@@ -4489,7 +4560,7 @@ Promotion(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
       promoChar = gameInfo.variant == VariantSuper ? PieceToChar(BlackSilver) : PieceToChar(BlackKing);
       break;
     case PB_Queen:
-      promoChar = gameInfo.variant == VariantShogi ? '+' : ToLower(PieceToChar(WhiteOnMove(currentMove) ? WhiteQueen : BlackQueen));
+      promoChar = promoStyle ? '+' : ToLower(PieceToChar(WhiteOnMove(currentMove) ? WhiteQueen : BlackQueen));
       break;
     case PB_Rook:
       promoChar = ToLower(PieceToChar(WhiteOnMove(currentMove) ? WhiteRook : BlackRook));
@@ -4506,7 +4577,8 @@ Promotion(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
       promoChar = ToLower(PieceToChar(WhiteOnMove(currentMove) ? WhiteAngel : BlackAngel));
       break;
     case PB_Knight:
-      promoChar = gameInfo.variant == VariantShogi ? '=' : PieceToChar(WhiteOnMove(currentMove) ? WhiteKnight : BlackKnight);
+      promoChar = gameInfo.variant == VariantShogi ? '=' : promoStyle ? NULLCHAR : 
+                  ToLower(PieceToChar(WhiteOnMove(currentMove) ? WhiteKnight : BlackKnight));
       break;
     default:
       return FALSE;
@@ -4537,8 +4609,9 @@ PromotionPopup(HWND hwnd)
 }
 
 void
-PromotionPopUp()
+PromotionPopUp(char choice)
 {
+  promoStyle = (choice == '+');
   DrawPosition(TRUE, NULL);
   PromotionPopup(hwndMain);
 }
@@ -4676,7 +4749,7 @@ LRESULT CALLBACK
 WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
   FARPROC lpProc;
-  int wmId, wmEvent;
+  int wmId;
   char *defName;
   FILE *f;
   UINT number;
@@ -4755,6 +4828,7 @@ WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
       nnew = RealizePalette(hdc);
       if (nnew > 0) {
 	paletteChanged = TRUE;
+
         InvalidateRect(hwnd, &boardRect, FALSE);
       }
       ReleaseDC(hwnd, hdc);
@@ -4778,7 +4852,6 @@ WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
   case WM_COMMAND: /* message: command from application menu */
     wmId    = LOWORD(wParam);
-    wmEvent = HIWORD(wParam);
 
     switch (wmId) {
     case IDM_NewGame:
@@ -4868,6 +4941,16 @@ WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 			 _("Save Diagram to File"), NULL, fileTitle, NULL);
       if (f != NULL) {
 	SaveDiagram(f);
+      }
+      break;
+
+    case IDM_SaveSelected:
+      f = OpenFileDialog(hwnd, "a", "",
+			 "pgn",
+			 GAME_FILT,
+			 _("Save Game to File"), NULL, fileTitle, NULL);
+      if (f != NULL) {
+	SaveSelected(f, 0, "");
       }
       break;
 
@@ -5097,6 +5180,7 @@ WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
       break;
 
     case IDM_Rematch:
+
       RematchEvent();
       break;
 
@@ -5586,7 +5670,7 @@ WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     if( hwnd == hwndMain && appData.useStickyWindows ) {
         LPWINDOWPOS lpwp = (LPWINDOWPOS) lParam;
 
-        if( ((lpwp->flags & SWP_NOMOVE) == 0) && ((lpwp->flags & SWP_NOSIZE) != 0) ) {
+        if( ((lpwp->flags & SWP_NOMOVE) == 0) /*&& ((lpwp->flags & SWP_NOSIZE) != 0)*/ ) { // [HGM] in Win8 size always accompanies move?
             /* Window is moving */
             RECT rcMain;
 
@@ -5655,6 +5739,8 @@ WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
   default:	/* Passes it on if unprocessed */
     return (DefWindowProc(hwnd, message, wParam, lParam));
   }
+
+
   return 0;
 }
 
@@ -6254,6 +6340,7 @@ StartupDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 	SwapEngines(singleList); // temporarily swap first and second, to load a second 'first', ...
 	ParseArgs(StringGet, &p);
 	SwapEngines(singleList); // ... and then make it 'second'
+
 	appData.noChessProgram = FALSE;
 	appData.icsActive = FALSE;
       } else if (IsDlgButtonChecked(hDlg, OPT_ChessServer)) {
@@ -6344,7 +6431,7 @@ LRESULT CALLBACK
 CommentDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
   static HANDLE hwndText = NULL;
-  int len, newSizeX, newSizeY, flags;
+  int len, newSizeX, newSizeY;
   static int sizeX, sizeY;
   char *str;
   RECT rect;
@@ -6372,7 +6459,6 @@ CommentDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
     /* Size and position the dialog */
     if (!commentDialog) {
       commentDialog = hDlg;
-      flags = SWP_NOZORDER;
       GetClientRect(hDlg, &rect);
       sizeX = rect.right;
       sizeY = rect.bottom;
@@ -6709,7 +6795,6 @@ ErrorPopDown()
 LRESULT CALLBACK
 ErrorDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
-  HANDLE hwndText;
   RECT rChild;
 
   switch (message) {
@@ -6733,7 +6818,6 @@ ErrorDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 
     errorDialog = hDlg;
     SetWindowText(hDlg, errorTitle);
-    hwndText = GetDlgItem(hDlg, OPT_ErrorText);
     SetDlgItemText(hDlg, OPT_ErrorText, errorMessage);
     return FALSE;
 
@@ -6759,7 +6843,6 @@ HWND gothicDialog = NULL;
 LRESULT CALLBACK
 GothicDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
-  HANDLE hwndText;
   RECT rChild;
   int height = GetSystemMetrics(SM_CYCAPTION)+GetSystemMetrics(SM_CYFRAME);
 
@@ -6778,7 +6861,6 @@ GothicDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
     */
     gothicDialog = hDlg;
     SetWindowText(hDlg, errorTitle);
-    hwndText = GetDlgItem(hDlg, OPT_ErrorText);
     SetDlgItemText(hDlg, OPT_ErrorText, errorMessage);
     return FALSE;
 
@@ -6831,6 +6913,7 @@ GothicPopUp(char *title, VariantClass variant)
 static char *history[HISTORY_SIZE];
 int histIn = 0, histP = 0;
 
+
 VOID
 SaveInHistory(char *cmd)
 {
@@ -6843,6 +6926,7 @@ SaveInHistory(char *cmd)
   histIn = (histIn + 1) % HISTORY_SIZE;
   if (history[histIn] != NULL) {
     free(history[histIn]);
+
     history[histIn] = NULL;
   }
   histP = histIn;
@@ -7653,6 +7737,7 @@ DoWriteFile(HANDLE hFile, char *buf, int count, DWORD *outCount,
       else
 	err = GetLastError();
     }
+
   }
   return err;
 }
@@ -8518,6 +8603,7 @@ HWND gameListOptionsDialog;
 
 // low-level front-end: clear text edit / list widget
 void
+
 GLT_ClearList()
 {
     SendDlgItemMessage( gameListOptionsDialog, IDC_GameListTags, LB_RESETCONTENT, 0, 0 );
@@ -8626,8 +8712,11 @@ int GameListOptions()
     result = DialogBoxParam( hInst, MAKEINTRESOURCE(DLG_GameListOptions), hwndMain, (DLGPROC)lpProc, (LPARAM)lpUserGLT );
 
     if( result == 0 ) {
+        char *oldTags = appData.gameListTags;
         /* [AS] Memory leak here! */
         appData.gameListTags = strdup( lpUserGLT ); 
+        if(strcmp(oldTags, appData.gameListTags)) // [HGM] redo Game List when we changed something
+            GameListToListBox(NULL, TRUE, ".", NULL, FALSE, FALSE); // "." as filter is kludge to select all
     }
 
     return result;
@@ -8708,6 +8797,13 @@ EditCommentPopUp(int index, char *title, char *str)
   EitherCommentPopUp(index, title, str, TRUE);
 }
 
+
+int
+Roar()
+{
+  MyPlaySound(&sounds[(int)SoundRoar]);
+  return 1;
+}
 
 VOID
 RingBell()
@@ -8865,6 +8961,7 @@ DisplayBlackClock(long timeRemaining, int highlight)
 {
   HDC hdc;
   char *flag = blackFlag && gameMode == TwoMachinesPlay ? "(!)" : "";
+
 
   if(appData.noGUI) return;
   hdc = GetDC(hwndMain);
@@ -9177,15 +9274,15 @@ DestroyChildProcess(ProcRef pr, int/*boolean*/ signal)
     /*!!if (signal) GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, cp->pid);*/
 
     /* [AS] Special termination modes for misbehaving programs... */
-    if( signal == 9 ) { 
+    if( signal & 8 ) { 
         result = TerminateProcess( cp->hProcess, 0 );
 
         if ( appData.debugMode) {
             fprintf( debugFP, "Terminating process %lu, result=%d\n", cp->pid, result );
         }
     }
-    else if( signal == 10 ) {
-        DWORD dw = WaitForSingleObject( cp->hProcess, 3*1000 ); // Wait 3 seconds at most
+    else if( signal & 4 ) {
+        DWORD dw = WaitForSingleObject( cp->hProcess, appData.delayAfterQuit*1000 + 50 ); // Wait 3 seconds at most
 
         if( dw != WAIT_OBJECT_0 ) {
             result = TerminateProcess( cp->hProcess, 0 );
@@ -9682,6 +9779,7 @@ OutputToProcess(ProcRef pr, char *message, int count, int *outError)
   int outCount = SOCKET_ERROR;
   ChildProc *cp = (ChildProc *) pr;
   static OVERLAPPED ovl;
+
   static int line = 0;
 
   if (pr == NoProc)
@@ -9884,15 +9982,22 @@ AnimateMove(board, fromX, fromY, toX, toY)
      int toY;
 {
   ChessSquare piece;
+  int x = toX, y = toY;
   POINT start, finish, mid;
   POINT frames[kFactor * 2 + 1];
   int nFrames, n;
+
+  if(killX >= 0 && IS_LION(board[fromY][fromX])) Roar();
 
   if (!appData.animate) return;
   if (doingSizing) return;
   if (fromY < 0 || fromX < 0) return;
   piece = board[fromY][fromX];
   if (piece >= EmptySquare) return;
+
+  if(killX >= 0) toX = killX, toY = killY; // [HGM] lion: first to kill square
+
+again:
 
   ScreenSquare(fromX, fromY, &start);
   ScreenSquare(toX, toY, &finish);
@@ -9932,6 +10037,9 @@ AnimateMove(board, fromX, fromY, toX, toY)
   }
   animInfo.pos = finish;
   DrawPosition(FALSE, NULL);
+
+  if(toX != x || toY != y) { fromX = toX; fromY = toY; toX = x; toY = y; goto again; } // second leg
+
   animInfo.piece = EmptySquare;
   Explode(board, fromX, fromY, toX, toY);
 }
@@ -10009,6 +10117,7 @@ int flock(int fid, int code)
     ov.OffsetHigh = 0;
     switch(code) {
       case 1: LockFileEx(hFile, LOCKFILE_EXCLUSIVE_LOCK, 0, 1024, 0, &ov); break;   // LOCK_SH
+
       case 2: LockFileEx(hFile, LOCKFILE_EXCLUSIVE_LOCK, 0, 1024, 0, &ov); break;   // LOCK_EX
       case 3: UnlockFileEx(hFile, 0, 1024, 0, &ov); break; // LOCK_UN
       default: return -1;
@@ -10033,6 +10142,6 @@ ActivateTheme (int new)
    InitTextures();
    if(new) InitDrawingColors();
    fontBitmapSquareSize = 0; // request creation of new font pieces
-   InitDrawingSizes(-2, 0);
+   InitDrawingSizes(boardSize, 0);
    InvalidateRect(hwndMain, NULL, TRUE);
 }

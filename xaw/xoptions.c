@@ -1,7 +1,7 @@
 /*
  * xoptions.c -- Move list window, part of X front end for XBoard
  *
- * Copyright 2000, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Copyright 2000, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  * ------------------------------------------------------------------------
  *
  * GNU XBoard is free software: you can redistribute it and/or modify
@@ -266,6 +266,39 @@ SelectedListBoxItem (Option *opt)
 }
 
 void
+SetTextColor (char **cnames, int fg, int bg, int attr)
+{ // this is not possible in Xaw
+}
+
+void
+AppendColorized (Option *opt, char *message, int count)
+{
+  if(!opt->handle) return;
+  AppendText(opt, message);
+}
+
+void
+Show (Option *opt, int hide)
+{
+    static Dimension h;
+    Arg args[16];
+    Dimension v;
+    int j=0;
+return; // FIXME: it would be nice if the Chat window did have an ICS pane we could hide behind
+//printf("Show(%d) %x\n", hide, opt->handle);
+    if(!opt->handle) return;
+    if(hide) { // make sure original size is saved
+      XtSetArg(args[j], XtNheight, &v); j++;
+      XtGetValues(opt->handle, args, j);
+      if(v != 1) h = v;
+    }
+printf("h = %d\n",h);
+    j = 0;
+    XtSetArg(args[j], XtNheight, hide ? 1 : h); j++;
+    XtSetValues(opt->handle, args, j);
+}
+
+void
 HighlightText (Option *opt, int start, int end, Boolean on)
 {
     if(on)
@@ -292,12 +325,20 @@ SetIconName (DialogClass dlg, char *name)
 }
 
 static void
+LabelCallback (Widget ww, XtPointer client_data, XEvent *event, Boolean *b)
+{   // called on ButtonPress in label widgets with attached user handler (clocks!)
+    int s, data = (intptr_t) client_data;
+    Option *opt = dialogOptions[data >> 8] + (s = data & 255);
+
+    if(((XButtonEvent*)event)->button != Button1) s = -s;
+    ((ButtonCallback*) opt->target) (s);
+}
+
+static void
 CheckCallback (Widget ww, XtPointer client_data, XEvent *event, Boolean *b)
 {
     int s, data = (intptr_t) client_data;
     Option *opt = dialogOptions[data >> 8] + (data & 255);
-
-    if(opt->type == Label) { ((ButtonCallback*) opt->target)(data&255); return; }
 
     GetWidgetState(opt, &s);
     SetWidgetState(opt, !s);
@@ -333,7 +374,7 @@ SpinCallback (Widget w, XtPointer client_data, XtPointer call_data)
 	if(--j < opt->min) return;
     } else return;
     snprintf(buf, MSG_SIZ,  "%d", j);
-    SetWidgetText(opt, buf, TransientDlg);
+    SetWidgetText(opt, buf, shellUp[TransientDlg] ? TransientDlg : MasterDlg);
 }
 
 static void
@@ -626,7 +667,8 @@ GenericPopDown (Widget w, XEvent *event, String *prms, Cardinal *nprms)
 {   // to cause popdown through a translation (Delete Window button!)
     int dlg = atoi(prms[0]);
     Widget sh = shells[dlg];
-    if(shellUp[BrowserDlg] && dlg != BrowserDlg || dialogError) return; // prevent closing dialog when it has an open file-browse daughter
+    if(shellUp[BrowserDlg] && dlg != BrowserDlg || dialogError || dlg == MasterDlg && shellUp[TransientDlg])
+	return; // prevent closing dialog when it has an open file-browse or transient daughter
     shells[dlg] = w;
     PopDown(dlg);
     shells[dlg] = sh; // restore
@@ -708,8 +750,15 @@ GraphEventProc(Widget widget, caddr_t client_data, XEvent *event)
 			 // to give drawing routines opportunity to use it before first expose event
 			 // (which are only processed when main gets to the event loop, so after all init!)
 			 // so only change when size is no longer good
+		cairo_t *cr;
 		if(graph->choice) cairo_surface_destroy((cairo_surface_t *) graph->choice);
 		graph->choice = (char**) cairo_image_surface_create (CAIRO_FORMAT_ARGB32, w, h);
+		// paint white, to prevent weirdness when people maximize window and drag pieces over space next to board
+		cr = cairo_create ((cairo_surface_t *) graph->choice);
+		cairo_rectangle (cr, 0, 0, w, h);
+		cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
+		cairo_fill(cr);
+		cairo_destroy (cr);
 		break;
 	    }
 	    w = ((XExposeEvent*)event)->width;
@@ -913,6 +962,7 @@ GenericPopUp (Option *option, char *title, DialogClass dlgNr, DialogClass parent
 	shellUp[dlgNr] = True;
 	return 0;
     }
+    if(dlgNr == TransientDlg && parent == BoardWindow && shellUp[MasterDlg]) parent = MasterDlg; // MasterDlg can always take role of main window
 
     dialogOptions[dlgNr] = option; // make available to callback
     // post currentOption globally, so Spin and Combo callbacks can already use it
@@ -957,7 +1007,7 @@ GenericPopUp (Option *option, char *title, DialogClass dlgNr, DialogClass parent
     for(h=0; h<height || c == width-1; h++) {
 	i = h + c*height;
 	if(option[i].type == EndMark) break;
-	if(option[i].type == -1) continue;
+	if(option[i].type == Skip) continue;
 	lastrow = forelast;
 	forelast = last;
 	switch(option[i].type) {
@@ -981,6 +1031,7 @@ GenericPopUp (Option *option, char *title, DialogClass dlgNr, DialogClass parent
 	    } else texts[h] = dialog = NULL; // kludge to position from left margin
 	    w = option[i].type == Spin || option[i].type == Fractional ? 70 : option[i].max ? option[i].max : 205;
 	    if(option[i].type == FileName || option[i].type == PathName) w -= 55;
+	    if(squareSize > 33) w += (squareSize - 33)/2;
 	    j = SetPositionAndSize(args, dialog, last, 1 /* border */,
 				   w /* w */, option[i].type == TextBox ? option[i].value : 0 /* h */, 0x91 /* chain full width */);
 	    if(option[i].type == TextBox) { // decorations for multi-line text-edits
@@ -1067,7 +1118,7 @@ GenericPopUp (Option *option, char *title, DialogClass dlgNr, DialogClass parent
 	    XtSetArg(args[j], XtNlabel, _(msg));  j++;
 	    option[i].handle = (void*) (last = XtCreateManagedWidget("label", labelWidgetClass, form, args, j));
 	    if(option[i].target) // allow user to specify event handler for button presses
-		XtAddEventHandler(last, ButtonPressMask, False, CheckCallback, (XtPointer)(intptr_t) i + 256*dlgNr);
+		XtAddEventHandler(last, ButtonPressMask, False, LabelCallback, (XtPointer)(intptr_t) i + 256*dlgNr);
 	    break;
 	  case SaveButton:
 	  case Button:
@@ -1078,9 +1129,9 @@ GenericPopUp (Option *option, char *title, DialogClass dlgNr, DialogClass parent
 	    j = SetPositionAndSize(args, last, lastrow, 3 /* border */,
 				   option[i].max /* w */, shrink ? textHeight : 0 /* h */, option[i].min & 0xE | chain /* chain */);
 	    XtSetArg(args[j], XtNlabel, _(option[i].name));  j++;
-	    if(option[i].textValue) { // special for buttons of New Variant dialog
-		XtSetArg(args[j], XtNsensitive, appData.noChessProgram || option[i].value < 0
-					 || strstr(first.variants, VariantName(option[i].value))); j++;
+	    if(option[i].textValue && *option[i].textValue == '#') { // special for buttons of New Variant dialog
+		XtSetArg(args[j], XtNsensitive, option[i].value >= 0 && (appData.noChessProgram
+					 || strstr(first.variants, VariantName(option[i].value)))); j++;
 		XtSetArg(args[j], XtNborderWidth, (gameInfo.variant == option[i].value)+1); j++;
 	    }
 	    option[i].handle = (void*)
@@ -1090,7 +1141,7 @@ GenericPopUp (Option *option, char *title, DialogClass dlgNr, DialogClass parent
 		XtAddEventHandler(option[i-1].handle, KeyReleaseMask, False, ColorChanged, (XtPointer)(intptr_t) i-1);
 	    }
 	    XtAddCallback(last, XtNcallback, GenericCallback, (XtPointer)(intptr_t) i + (dlgNr<<16)); // invokes user callback
-	    if(option[i].textValue) SetColor( option[i].textValue, &option[i]); // for new-variant buttons
+	    if(option[i].textValue && *option[i].textValue == '#') SetColor( option[i].textValue, &option[i]); // for new-variant buttons
 	    break;
 	  case ComboBox:
 	    j = SetPositionAndSize(args, last, lastrow, 0 /* border */,
@@ -1180,6 +1231,7 @@ GenericPopUp (Option *option, char *title, DialogClass dlgNr, DialogClass parent
 	    last = form; lastrow = oldLastRow; form = oldForm; forelast = oldForeLast;
 	    break;
 	  case Break:
+	    if(c) break;
 	    width++;
 	    height = i+1;
 	    stack = !(option[i].min & SAME_ROW);
@@ -1263,7 +1315,7 @@ GenericPopUp (Option *option, char *title, DialogClass dlgNr, DialogClass parent
     XtAddCallback(b_ok, XtNcallback, GenericCallback, (XtPointer)(intptr_t) (30001 + (dlgNr<<16)));
     if(!(option[i].min & NO_CANCEL)) {
       XtSetArg(args[1], XtNfromHoriz, b_ok); // overwrites!
-      b_cancel = XtCreateManagedWidget(_("cancel"), commandWidgetClass, form, args, j);
+      b_cancel = XtCreateManagedWidget(_("Cancel"), commandWidgetClass, form, args, j);
       XtAddCallback(b_cancel, XtNcallback, GenericCallback, (XtPointer)(intptr_t) (30000 + (dlgNr<<16)));
     }
   }
@@ -1334,6 +1386,11 @@ void
 SetInsertPos (Option *opt, int pos)
 {
     Arg args[16];
+    if(pos == 999999) { // this kludge to indicate end in GTK is fatal in Xaw
+      char *s;
+      GetWidgetText(opt, &s);
+      pos = strlen(s) - 1;
+    }
     XtSetArg(args[0], XtNinsertPosition, pos);
     XtSetValues(opt->handle, args, 1);
 //    SetFocus(opt->handle, shells[InputBoxDlg], NULL, False); // No idea why this does not work, and the following is needed:
@@ -1345,6 +1402,8 @@ TypeInProc (Widget w, XEvent *event, String *prms, Cardinal *nprms)
 {   // can be used as handler for any text edit in any dialog (from GenericPopUp, that is)
     int n = prms[0][0] - '0';
     Widget sh = XtParent(XtParent(XtParent(w))); // popup shell
+    extern int hidden;
+    hidden = 0;
 
     if(n<2) { // Enter or Esc typed from primed text widget: treat as if dialog OK or cancel button hit.
 	int dlgNr; // figure out what the dialog number is by comparing shells (because we must pass it :( )
@@ -1354,7 +1413,7 @@ TypeInProc (Widget w, XEvent *event, String *prms, Cardinal *nprms)
 }
 
 void
-HardSetFocus (Option *opt)
+HardSetFocus (Option *opt, DialogClass dlg)
 {
     XSetInputFocus(xDisplay, XtWindow(opt->handle), RevertToPointerRoot, CurrentTime);
 }

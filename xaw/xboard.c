@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * The following terms apply to Digital Equipment Corporation's copyright
  * interest in XBoard:
@@ -183,13 +183,6 @@ extern char *getenv();
 // [HGM] bitmaps: put before incuding the bitmaps / pixmaps, to know how many piece types there are.
 #include "common.h"
 
-#if HAVE_LIBXPM
-#include <X11/xpm.h>
-#define IMAGE_EXT "xpm"
-#else
-#define IMAGE_EXT "xim"
-#endif
-
 #include "bitmaps/icon_white.bm"
 #include "bitmaps/icon_black.bm"
 #include "bitmaps/checkmark.bm"
@@ -210,6 +203,7 @@ extern char *getenv();
 #include "gettext.h"
 #include "draw.h"
 
+#define SLASH '/'
 
 #ifdef __EMX__
 #ifndef HAVE_USLEEP
@@ -262,6 +256,7 @@ void ManInner P((Widget w, XEvent *event, String *prms, Cardinal *nprms));
 void DisplayMove P((int moveNumber));
 void update_ics_width P(());
 int CopyMemoProc P(());
+static int FindLogo P((char *place, char *name, char *buf));
 
 /*
 * XBoard depends on Xt R4 or higher
@@ -429,128 +424,6 @@ String xboardResources[] = {
 /* Max possible square size */
 #define MAXSQSIZE 256
 
-static int xpm_avail[MAXSQSIZE];
-
-#ifdef HAVE_DIR_STRUCT
-
-/* Extract piece size from filename */
-static int
-xpm_getsize (char *name, int len, char *ext)
-{
-    char *p, *d;
-    char buf[10];
-
-    if (len < 4)
-      return 0;
-
-    if ((p=strchr(name, '.')) == NULL ||
-	StrCaseCmp(p+1, ext) != 0)
-      return 0;
-
-    p = name + 3;
-    d = buf;
-
-    while (*p && isdigit(*p))
-      *(d++) = *(p++);
-
-    *d = 0;
-    return atoi(buf);
-}
-
-/* Setup xpm_avail */
-static int
-xpm_getavail (char *dirname, char *ext)
-{
-    DIR *dir;
-    struct dirent *ent;
-    int  i;
-
-    for (i=0; i<MAXSQSIZE; ++i)
-      xpm_avail[i] = 0;
-
-    if (appData.debugMode)
-      fprintf(stderr, "XPM dir:%s:ext:%s:\n", dirname, ext);
-
-    dir = opendir(dirname);
-    if (!dir)
-      {
-	  fprintf(stderr, _("%s: Can't access XPM directory %s\n"),
-		  programName, dirname);
-	  exit(1);
-      }
-
-    while ((ent=readdir(dir)) != NULL) {
-	i = xpm_getsize(ent->d_name, NAMLEN(ent), ext);
-	if (i > 0 && i < MAXSQSIZE)
-	  xpm_avail[i] = 1;
-    }
-
-    closedir(dir);
-
-    return 0;
-}
-
-void
-xpm_print_avail (FILE *fp, char *ext)
-{
-    int i;
-
-    fprintf(fp, _("Available `%s' sizes:\n"), ext);
-    for (i=1; i<MAXSQSIZE; ++i) {
-	if (xpm_avail[i])
-	  printf("%d\n", i);
-    }
-}
-
-/* Return XPM piecesize closest to size */
-int
-xpm_closest_to (char *dirname, int size, char *ext)
-{
-    int i;
-    int sm_diff = MAXSQSIZE;
-    int sm_index = 0;
-    int diff;
-
-    xpm_getavail(dirname, ext);
-
-    if (appData.debugMode)
-      xpm_print_avail(stderr, ext);
-
-    for (i=1; i<MAXSQSIZE; ++i) {
-	if (xpm_avail[i]) {
-	    diff = size - i;
-	    diff = (diff<0) ? -diff : diff;
-	    if (diff < sm_diff) {
-		sm_diff = diff;
-		sm_index = i;
-	    }
-	}
-    }
-
-    if (!sm_index) {
-	fprintf(stderr, _("Error: No `%s' files!\n"), ext);
-	exit(1);
-    }
-
-    return sm_index;
-}
-#else	/* !HAVE_DIR_STRUCT */
-/* If we are on a system without a DIR struct, we can't
-   read the directory, so we can't collect a list of
-   filenames, etc., so we can't do any size-fitting. */
-int
-xpm_closest_to (char *dirname, int size, char *ext)
-{
-    fprintf(stderr, _("\
-Warning: No DIR structure found on this system --\n\
-         Unable to autosize for XPM/XIM pieces.\n\
-   Please report this error to %s.\n\
-   Include system type & operating system in message.\n"), PACKAGE_BUGREPORT););
-    return size;
-}
-#endif /* HAVE_DIR_STRUCT */
-
-
 /* Arrange to catch delete-window events */
 Atom wm_delete_window;
 void
@@ -624,7 +497,8 @@ ParseFont (char *name, int number)
   if(sscanf(name, "size%d:", &size)) {
     // [HGM] font: font is meant for specific boardSize (likely from settings file);
     //       defer processing it until we know if it matches our board size
-    if(size >= 0 && size<MAX_SIZE) { // for now, fixed limit
+    if(strstr(name, "-*-") &&        // only pay attention to things that look like X-fonts
+       size >= 0 && size<MAX_SIZE) { // for now, fixed limit
 	fontTable[number][size] = strdup(strchr(name, ':')+1);
 	fontValid[number][size] = True;
     }
@@ -662,7 +536,13 @@ CreateFonts ()
 void
 ParseColor (int n, char *name)
 { // in XBoard, just copy the color-name string
-  if(colorVariable[n]) *(char**)colorVariable[n] = strdup(name);
+  if(colorVariable[n] && *name == '#') *(char**)colorVariable[n] = strdup(name);
+}
+
+char *
+Col2Text (int n)
+{
+    return *(char**)colorVariable[n];
 }
 
 void
@@ -764,6 +644,12 @@ GetActualPlacement (Widget wg, WindowPlacement *wp)
   wp->height = winAt.height;
   wp->width = winAt.width;
   frameX = winAt.x; frameY = winAt.y; // remember to decide if windows touch
+}
+
+void
+GetPlacement (DialogClass dlg, WindowPlacement *wp)
+{ // wrapper to shield back-end from widget type
+  if(shellUp[dlg]) GetActualPlacement(shells[dlg], wp);
 }
 
 void
@@ -948,6 +834,8 @@ PrintArg (ArgType t)
     case ArgTwo:
     case ArgNone:
     case ArgCommSettings:
+    case ArgMaster:
+    case ArgInstall:
       break;
   }
   return p;
@@ -957,17 +845,18 @@ char *
 GenerateGlobalTranslationTable (void)
 {
   /* go through all menu items and extract the keyboard shortcuts, so that X11 can load them */
-  char *output;
+  char *output[2];
 
-  int i,j;
+  int i,j,n=0;
   MenuItem *mi;
 
-  output = strdup("");
+  output[0] = strdup(""); // build keystrokes with and wo mod keys separately
+  output[1] = strdup(""); // so the more specific can preceed the other
 
   /* loop over all menu entries */
-  for( i=0; menuBar[i].mi ; i++)
+  for( i=0; menuBar[i-n].mi || !n++; i++)
     {
-      mi = menuBar[i].mi;
+      mi = menuBar[i+n].mi; // kludge to access 'noMenu' behind sentinel
       for(j=0; mi[j].proc; j++)
 	{
 	  if (mi[j].accel)
@@ -1032,17 +921,16 @@ GenerateGlobalTranslationTable (void)
 		mods[strlen(mods)-1]='\0';
 
 	      /* get the name for the callback, we can use MenuItem() here that will call KeyBindingProc */
-	      size_t namesize = snprintf(NULL, 0, "%s.%s", menuBar[i].ref, mi[j].ref);
-	      char *name = malloc(namesize+1);
-	      snprintf(name, namesize+1, "%s.%s", menuBar[i].ref, mi[j].ref);
+	      char *name = malloc(MSG_SIZ);
+	      if(n) snprintf(name, MSG_SIZ, "%s", mi[j].ref);
+	      else  snprintf(name, MSG_SIZ, "%s.%s", menuBar[i].ref, mi[j].ref);
 
-	      size_t buffersize = snprintf(NULL, 0, ":%s<Key>%s: MenuItem(%s) \n ", mods, key, name);
-	      char *buffer = malloc(buffersize+1);
-	      snprintf(buffer, buffersize+1, ":%s<Key>%s: MenuItem(%s) \n ", mods, key, name);
+	      char *buffer = malloc(MSG_SIZ);
+	      snprintf(buffer, MSG_SIZ, ":%s<Key>%s: MenuItem(%s) \n ", mods, key, name);
 
 	      /* add string to the output */
-	      output = realloc(output, strlen(output) + strlen(buffer)+1);
-	      strncat(output, buffer, strlen(buffer));
+	      output[shift|alt|ctrl] = realloc(output[shift|alt|ctrl], strlen(output[shift|alt|ctrl]) + strlen(buffer)+1);
+	      strncat(output[shift|alt|ctrl], buffer, strlen(buffer));
 
 	      /* clean up */
 	      free(key);
@@ -1052,7 +940,10 @@ GenerateGlobalTranslationTable (void)
 	    }
 	}
     }
-  return output;
+  output[1] = realloc(output[1], strlen(output[1]) + strlen(output[0])+1);
+  strncat(output[1], output[0], strlen(output[0]));
+  free(output[0]);
+  return output[1];
 }
 
 
@@ -1100,6 +991,9 @@ main (int argc, char **argv)
     char *p;
     int forceMono = False;
 
+    extern Option chatOptions[]; // FIXME: adapt Chat window, removing ICS pane and Hide button
+    chatOptions[6].type = chatOptions[10].type = Skip;
+
     srandom(time(0)); // [HGM] book: make random truly random
 
     setbuf(stdout, NULL);
@@ -1107,12 +1001,29 @@ main (int argc, char **argv)
     debugFP = stderr;
 
     if(argc > 1 && (!strcmp(argv[1], "-v" ) || !strcmp(argv[1], "--version" ))) {
-	printf("%s version %s\n", PACKAGE_NAME, PACKAGE_VERSION);
+      printf("%s version %s\n\n  configure options: %s\n", PACKAGE_NAME, PACKAGE_VERSION, CONFIGURE_OPTIONS);
 	exit(0);
     }
 
     if(argc > 1 && !strcmp(argv[1], "--help" )) {
 	PrintOptions();
+	exit(0);
+    }
+
+    if(argc > 1 && !strcmp(argv[1], "--show-config")) { // [HGM] install: called to print config info
+	typedef struct {char *name, *value; } Config;
+	static Config configList[] = {
+	  { "Datadir", DATADIR },
+	  { "Sysconfdir", SYSCONFDIR },
+	  { NULL }
+	};
+	int i;
+
+	for(i=0; configList[i].name; i++) {
+	    if(argc > 2 && strcmp(argv[2], configList[i].name)) continue;
+	    if(argc > 2) printf("%s", configList[i].value);
+	    else printf("%-12s: %s\n", configList[i].name, configList[i].value);
+	}
 	exit(0);
     }
 
@@ -1212,6 +1123,8 @@ main (int argc, char **argv)
 		    programName, appData.boardSize);
 	    exit(2);
 	}
+	if(BOARD_WIDTH > 8)
+	    squareSize = (squareSize*8 + BOARD_WIDTH/2)/BOARD_WIDTH; // scale height
 	if (i < 7) {
 	    /* Find some defaults; use the nearest known size */
 	    SizeDefaults *szd, *nearest;
@@ -1235,8 +1148,8 @@ main (int argc, char **argv)
     } else {
         SizeDefaults *szd = sizeDefaults;
         if (*appData.boardSize == NULLCHAR) {
-	    while (DisplayWidth(xDisplay, xScreen) < szd->minScreenSize ||
-		   DisplayHeight(xDisplay, xScreen) < szd->minScreenSize) {
+	    while (DisplayWidth(xDisplay, xScreen)  < (szd->minScreenSize*BOARD_WIDTH  + 4)/8 ||
+		   DisplayHeight(xDisplay, xScreen) < (szd->minScreenSize*BOARD_HEIGHT + 4)/8) {
 	      szd++;
 	    }
 	    if (szd->name == NULL) szd--;
@@ -1375,13 +1288,15 @@ main (int argc, char **argv)
 
     CatchDeleteWindow(shellWidget, "QuitProc");
 
-    CreateAnyPieces();
+    CreateAnyPieces(1);
     CreateGrid();
 
     if(appData.logoSize)
     {   // locate and read user logo
-	char buf[MSG_SIZ];
-	snprintf(buf, MSG_SIZ, "%s/%s.png", appData.logoDir, UserName());
+	char buf[MSG_SIZ], name[MSG_SIZ];
+	snprintf(name, MSG_SIZ, "/home/%s", UserName());
+	if(!FindLogo(name, ".logo", buf))
+	    FindLogo(appData.logoDir, name + 6, buf);
 	ASSIGN(userLogo, buf);
     }
 
@@ -1415,6 +1330,9 @@ main (int argc, char **argv)
       EngineOutputPopUp();
     }
 
+    gameInfo.boardWidth = 0; // [HGM] pieces: kludge to ensure InitPosition() calls InitDrawingSizes()
+    InitPosition(TRUE);
+
     InitBackEnd2();
 
     if (errorExitStatus == -1) {
@@ -1435,8 +1353,6 @@ main (int argc, char **argv)
 	}
     }
 
-    gameInfo.boardWidth = 0; // [HGM] pieces: kludge to ensure InitPosition() calls InitDrawingSizes()
-    InitPosition(TRUE);
     UpdateLogos(TRUE);
 //    XtSetKeyboardFocus(shellWidget, formWidget);
     XSetInputFocus(xDisplay, XtWindow(formWidget), RevertToPointerRoot, CurrentTime);
@@ -1444,6 +1360,13 @@ main (int argc, char **argv)
     XtAppMainLoop(appContext);
     if (appData.debugMode) fclose(debugFP); // [DM] debug
     return 0;
+}
+
+void
+DoEvents ()
+{
+    XtInputMask m;
+    while((m = XtAppPending(appContext))) XtAppProcessEvent(appContext, m);
 }
 
 RETSIGTYPE
@@ -2572,6 +2495,19 @@ FrameDelay (int time)
 
 #endif
 
+static int
+FindLogo (char *place, char *name, char *buf)
+{   // check if file exists in given place
+    FILE *f;
+    if(!place) return 0;
+    snprintf(buf, MSG_SIZ, "%s/%s.png", place, name);
+    if(*place && strcmp(place, ".") && (f = fopen(buf, "r")) ) {
+	fclose(f);
+	return 1;
+    }
+    return 0;
+}
+
 static void
 LoadLogo (ChessProgramState *cps, int n, Boolean ics)
 {
@@ -2581,8 +2517,11 @@ LoadLogo (ChessProgramState *cps, int n, Boolean ics)
     } else if(appData.autoLogo) {
 	if(ics) { // [HGM] logo: in ICS mode second can be used for ICS
 	    sprintf(buf, "%s/%s.png", appData.logoDir, appData.icsHost);
-	} else if(appData.directory[n] && appData.directory[n][0]) {
-	    sprintf(buf, "%s/%s.png", appData.logoDir, cps->tidy);
+	} else { // engine; cascade
+	    if(!FindLogo(appData.logoDir, cps->tidy, buf) &&   // first try user log folder
+	       !FindLogo(appData.directory[n], "logo", buf) && // then engine directory
+	       !FindLogo("/usr/local/share/games/plugins/logos", cps->tidy, buf) ) // then system folders
+		FindLogo("/usr/share/games/plugins/logos", cps->tidy, buf);
 	}
     }
     if(logoName[0])

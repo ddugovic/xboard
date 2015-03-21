@@ -1,7 +1,7 @@
 /*
  * parser.c --
  *
- * Copyright 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Copyright 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  * ------------------------------------------------------------------------
  *
  * GNU XBoard is free software: you can redistribute it and/or modify
@@ -87,7 +87,7 @@ SkipWhite (char **p)
     return *p != start;
 }
 
-inline int
+static inline int
 Match (char *pattern, char **ptr)
 {
     char *p = pattern, *s = *ptr;
@@ -99,7 +99,7 @@ Match (char *pattern, char **ptr)
     return 0; // no match, no ptr update
 }
 
-inline int
+static inline int
 Word (char *pattern, char **p)
 {
     if(Match(pattern, p)) return 1;
@@ -151,11 +151,11 @@ PromoSuffix (char **p)
 {
     char *start = *p;
     if(**p == 'e' && (Match("ep", p) || Match("e.p.", p))) { *p = start; return NULLCHAR; } // non-compliant e.p. suffix is no promoChar!
-    if(**p == '+' && gameInfo.variant == VariantShogi) { (*p)++; return '+'; }
+    if(**p == '+' && IS_SHOGI(gameInfo.variant)) { (*p)++; return '+'; }
     if(**p == '=' || (gameInfo.variant == VariantSChess) && **p == '/') (*p)++; // optional = (or / for Seirawan gating)
     if(**p == '(' && (*p)[2] == ')' && isalpha( (*p)[1] )) { (*p) += 3; return ToLower((*p)[-2]); }
-    if(isalpha(**p)) return ToLower(*(*p)++);
-    if(*p != start) return '='; // must be the optional =
+    if(isalpha(**p) && **p != 'x') return ToLower(*(*p)++); // reserve 'x' for multi-leg captures? 
+    if(*p != start) return **p == '+' ? *(*p)++ : '='; // must be the optional = (or =+)
     return NULLCHAR; // no suffix detected
 }
 
@@ -174,6 +174,10 @@ NextUnit (char **p)
 	    if(fromString) return 0; // we are parsing string, so the end is really the end
 	    *p = inPtr = inputBuf;
 	    if(!ReadLine()) return 0; // EOF
+	} else if(inPtr > inputBuf + PARSEBUFSIZE/2) { // buffer fills up with already parsed stuff
+	    char *q = *p, *r = inputBuf;
+	    while(*r++ = *q++);
+	    *p = inputBuf; inPtr = r - 1;
 	}
 	parseStart = oldp = *p; // remember where we begin
 
@@ -236,7 +240,7 @@ NextUnit (char **p)
 	} else if(n == 1 && type[0] == NUMERIC && coord[0] > 1) { while(**p == '.') (*p)++; return Nothing; } // fast exit for move numbers
 	if(n == 4 && type[2] != type[3] && // we have a valid to-square (kludge: type[3] can be NOTHING on fxg type move)
 		     (piece || !promoted) && // promoted indicator only valid on named piece type
-	             (type[2] == ALPHABETIC || gameInfo.variant == VariantShogi)) { // in Shogi also allow alphabetic rank
+	             (type[2] == ALPHABETIC || IS_SHOGI(gameInfo.variant))) { // in Shogi also allow alphabetic rank
 	    DisambiguateClosure cl;
 	    int fromX, fromY, toX, toY;
 
@@ -257,7 +261,7 @@ NextUnit (char **p)
 	    if(piece) {
 		cl.pieceIn = CharToPiece(wom ? piece : ToLower(piece));
 		if(cl.pieceIn == EmptySquare) return ImpossibleMove; // non-existent piece
-		if(promoted) cl.pieceIn = (ChessSquare) (PROMOTED cl.pieceIn);
+		if(promoted) cl.pieceIn = (ChessSquare) (CHUPROMOTED cl.pieceIn);
 	    } else cl.pieceIn = EmptySquare;
 	    if(separator == '@' || separator == '*') { // drop move. We only get here without from-square or promoted piece
 		fromY = DROP_RANK; fromX = cl.pieceIn;
@@ -275,13 +279,25 @@ NextUnit (char **p)
 		fromY = (currentMoveString[1] = coord[1] + '0') - ONE;
 		currentMoveString[4] = cl.promoCharIn = PromoSuffix(p);
 		currentMoveString[5] = NULLCHAR;
+		if(!cl.promoCharIn && (**p == '-' || **p == 'x')) { // Lion-type multi-leg move
+		    currentMoveString[5] = (killX = toX) + AAA; // what we thought was to-square is in fact kill-square
+		    currentMoveString[6] = (killY = toY) + ONE; // append it as suffix behind long algebraic move
+		    currentMoveString[4] = ';';
+		    currentMoveString[7] = NULLCHAR;
+		    // read new to-square (VERY non-robust! Assumes correct (non-alpha-rank) syntax, and messes up on errors)
+		    toX = cl.ftIn = (currentMoveString[2] = *++*p) - AAA; ++*p;
+		    toY = cl.rtIn = (currentMoveString[3] = Number(p) + '0') - ONE;
+		}
 		if(type[0] != NOTHING && type[1] != NOTHING && type[3] != NOTHING) { // fully specified.
+		    ChessSquare realPiece = boards[yyboardindex][fromY][fromX];
 		    // Note that Disambiguate does not work for illegal moves, but flags them as impossible
 		    if(piece) { // check if correct piece indicated
-			ChessSquare realPiece = boards[yyboardindex][fromY][fromX];
 			if(PieceToChar(realPiece) == '~') realPiece = (ChessSquare) (DEMOTED realPiece);
 			if(!(appData.icsActive && PieceToChar(realPiece) == '+') && // trust ICS if it moves promoted pieces
 			   piece && realPiece != cl.pieceIn) return ImpossibleMove;
+		    } else if(!separator && **p == '+') { // could be a protocol move, where bare '+' suffix means shogi-style promotion
+			if(realPiece < (wom ?  WhiteCannon : BlackCannon) && PieceToChar(PROMOTED realPiece) == '+') // seems to be that
+			   currentMoveString[4] = cl.promoCharIn = *(*p)++; // append promochar after all
 		    }
 		    result = LegalityTest(boards[yyboardindex], PosFlags(yyboardindex), fromY, fromX, toY, toX, cl.promoCharIn);
 		    if (currentMoveString[4] == NULLCHAR) { // suppy missing mandatory promotion character
@@ -317,6 +333,7 @@ NextUnit (char **p)
 		currentMoveString[0] = cl.ff + AAA;
 		currentMoveString[1] = cl.rf + ONE;
 		currentMoveString[3] = cl.rt + ONE;
+		if(killX < 0) // [HGM] lion: do not overwrite kill-square suffix
 		currentMoveString[4] = cl.promoChar;
 
 		if((cl.kind == WhiteCapturesEnPassant || cl.kind == BlackCapturesEnPassant) && (Match("ep", p) || Match("e.p.", p)));
@@ -353,7 +370,7 @@ badMove:// we failed to find algebraic move
 	}
 
 	// ********* SAN Castings *************************************
-	if(**p == 'O' || **p == 'o' || **p == '0') {
+	if(**p == 'O' || **p == 'o' || **p == '0' && !Match("00:", p)) { // exclude 00 in time stamps
 	    int castlingType = 0;
 	    if(Match("O-O-O", p) || Match("o-o-o", p) || Match("0-0-0", p) ||
 	       Match("OOO", p) || Match("ooo", p) || Match("000", p)) castlingType = 2;
@@ -532,6 +549,8 @@ badMove:// we failed to find algebraic move
 	    return Nothing;
 	}
 
+	// ********* Prevent 00 in unprotected time stamps to be mistaken for castling *******
+	if(Match(":00", p)) return Nothing;
 
 	// ********* Could not match to anything. Return offending character ****
 	(*p)++;

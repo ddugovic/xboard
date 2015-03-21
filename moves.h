@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * Enhancements Copyright 2005 Alessandro Scotti
  *
@@ -61,6 +61,9 @@ extern void CopyBoard P((Board to, Board from));
 extern int CompareBoards P((Board board1, Board board2));
 extern char pieceToChar[(int)EmptySquare+1];
 extern char pieceNickName[(int)EmptySquare];
+extern char *pieceDesc[(int)EmptySquare];
+extern Board initialPosition;
+extern Boolean pieceDefs;
 
 typedef void (*MoveCallback) P((Board board, int flags, ChessMove kind,
 				int rf, int ff, int rt, int ft,
@@ -81,12 +84,15 @@ typedef void (*MoveCallback) P((Board board, int flags, ChessMove kind,
 				   destroying your own king is illegal */
 #define F_FRC_TYPE_CASTLING 256 /* generate castlings as captures of own Rook */
 #define F_MANDATORY_CAPTURE 0x200
+#define F_NULL_MOVE         0x400
 
 /* Special epfile values. [HGM] positive values are non-reversible moves! */
-#define EP_NONE (-4)           /* [HGM] Tricky! order matters:            */
-#define EP_UNKNOWN (-1)        /*       >= EP_UNKNOWN spils rep-draw      */
+#define EP_NONE (-6)           /* [HGM] Tricky! order matters:            */
+#define EP_UNKNOWN (-1)        /*       >= EP_UNKNOWN spoils rep-draw     */
 #define EP_CAPTURE (-2)        /*       <= EP_NONE is reversible move     */
 #define EP_PAWN_MOVE (-3)
+#define EP_IRON_LION (-4)
+#define EP_ROYAL_LION (-5)
 #define EP_REP_DRAW   (-15)
 #define EP_RULE_DRAW  (-14)
 #define EP_INSUF_DRAW  (-13)
@@ -172,4 +178,4 @@ ChessMove CoordsToAlgebraic P((Board board, int flags,
 			       int rf, int ff, int rt, int ft,
 			       int promoChar, char out[MOVE_LEN]));
 
-extern int quickFlag;
+extern int quickFlag, killX, killY, legNr;

@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * The following terms apply to Digital Equipment Corporation's copyright
  * interest in XBoard:
@@ -61,13 +61,14 @@ extern int lineGap, squareSize;
 
 // defined in draw.c
 void CreateGCs P((int redo));
-void CreateAnyPieces P((void));
+void CreateAnyPieces P((int p));
 void CreatePNGPieces P((void));
 void CreateGrid P((void));
 void DrawSegment P((int x, int y, int *lastX, int *lastY, int p));
 void DrawRectangle P((int left, int top, int right, int bottom, int side, int style));
 void DrawEvalText P((char *buf, int cbBuf, int y));
 extern Option *disp;
+extern char svgDir[];
 
 // defined in evaldraw.c
 float Color P((char *col, int n));

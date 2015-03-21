@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * Enhancements Copyright 2005 Alessandro Scotti
  *
@@ -60,7 +60,7 @@
 typedef enum {
   ArgString, ArgInt, ArgFloat, ArgBoolean, ArgTrue, ArgFalse, ArgNone,
   ArgColor, ArgAttribs, ArgFilename, ArgBoardSize, ArgFont, ArgCommSettings,
-  ArgSettingsFilename, ArgBackupSettingsFile, ArgTwo,
+  ArgSettingsFilename, ArgBackupSettingsFile, ArgTwo, ArgInstall, ArgMaster,
   ArgX, ArgY, ArgZ // [HGM] placement: for window-placement options stored relative to main window
 } ArgType;
 
@@ -102,7 +102,10 @@ typedef struct {
 IcsTextMenuEntry icsTextMenuEntry[ICS_TEXT_MENU_SIZE];
 
 int junk;
+unsigned int saveDate;
+unsigned int dateStamp;
 Boolean singleList;
+Boolean autoClose;
 char *homeDir;
 char *firstEngineLine;
 char *secondEngineLine;
@@ -149,6 +152,9 @@ ArgDescriptor argDescriptors[] = {
   { "loadGameFile", ArgFilename, (void *) &appData.loadGameFile, FALSE, INVALID },
   { "", ArgNone, NULL, FALSE, INVALID },
   /* keyword arguments */
+  { "saveDate", ArgInt, (void *) &saveDate, TRUE, 0 },
+  { "date", ArgInt, (void *) &dateStamp, FALSE, 0 },
+  { "autoClose", ArgTrue, (void *) &autoClose, FALSE, FALSE },
   JAWS_ARGS
   { "whitePieceColor", ArgColor, (void *) 0, TRUE, (ArgIniType) WHITE_PIECE_COLOR },
   { "wpc", ArgColor, (void *) 0, FALSE, INVALID },
@@ -468,6 +474,7 @@ ArgDescriptor argDescriptors[] = {
   { "soundSeek", ArgFilename, (void *) &appData.soundSeek, TRUE, (ArgIniType) "" },
   { "soundMove", ArgFilename, (void *) &appData.soundMove, TRUE, (ArgIniType) "" },
   { "soundBell", ArgFilename, (void *) &appData.soundBell, TRUE, (ArgIniType) SOUND_BELL },
+  { "soundRoar", ArgFilename, (void *) &appData.soundRoar, TRUE, (ArgIniType) "" },
   { "soundIcsWin", ArgFilename, (void *) &appData.soundIcsWin, TRUE, (ArgIniType) "" },
   { "soundIcsLoss", ArgFilename, (void *) &appData.soundIcsLoss, TRUE, (ArgIniType) "" },
   { "soundIcsDraw", ArgFilename, (void *) &appData.soundIcsDraw, TRUE, (ArgIniType) "" },
@@ -505,7 +512,9 @@ ArgDescriptor argDescriptors[] = {
     TRUE, (ArgIniType) FCP_NAMES },
   { "secondChessProgramNames", ArgString, (void *) &secondChessProgramNames,
     !XBOARD, (ArgIniType) SCP_NAMES },
-  { "themeNames", ArgString, (void *) &appData.themeNames, !XBOARD, (ArgIniType) "native -upf false -ub false -ubt false -pid \"\"\n" },
+  { "themeNames", ArgString, (void *) &appData.themeNames, TRUE, (ArgIniType) "native -upf false -ub false -ubt false -pid \"\"\n" },
+  { "addMasterOption", ArgMaster, NULL, FALSE, INVALID },
+  { "installEngine", ArgInstall, (void *) &firstChessProgramNames, FALSE, (ArgIniType) "" },
   { "initialMode", ArgString, (void *) &appData.initialMode, FALSE, (ArgIniType) "" },
   { "mode", ArgString, (void *) &appData.initialMode, FALSE, INVALID },
   { "variant", ArgString, (void *) &appData.variant, FALSE, (ArgIniType) "normal" },
@@ -549,6 +558,7 @@ ArgDescriptor argDescriptors[] = {
   { "pgnEventHeader", ArgString, (void *) &appData.pgnEventHeader, TRUE, (ArgIniType) "Computer Chess Game" },
   { "defaultFrcPosition", ArgInt, (void *) &appData.defaultFrcPosition, TRUE, (ArgIniType) -1 },
   { "shuffleOpenings", ArgTrue, (void *) &shuffleOpenings, FALSE, INVALID },
+  { "fischerCastling", ArgTrue, (void *) &appData.fischerCastling, FALSE, INVALID },
   { "gameListTags", ArgString, (void *) &appData.gameListTags, TRUE, (ArgIniType) GLT_DEFAULT_TAGS },
   { "saveOutOfBookInfo", ArgBoolean, (void *) &appData.saveOutOfBookInfo, TRUE, (ArgIniType) TRUE },
   { "showEvalInMoveHistory", ArgBoolean, (void *) &appData.showEvalInMoveHistory, TRUE, (ArgIniType) TRUE },
@@ -597,6 +607,10 @@ ArgDescriptor argDescriptors[] = {
   { "useBorder", ArgBoolean, (void *) &appData.useBorder, TRUE, (ArgIniType) FALSE },
   { "ub", ArgBoolean, (void *) &appData.useBorder, FALSE, INVALID },
   { "border", ArgFilename, (void *) &appData.border, TRUE, (ArgIniType) "" },
+  { "finger", ArgFilename, (void *) &appData.finger, FALSE, (ArgIniType) "" },
+  { "inscriptions", ArgString, (void *) &appData.inscriptions, XBOARD, (ArgIniType) "" },
+  { "autoInstall", ArgString, (void *) &appData.autoInstall, XBOARD, (ArgIniType) "" },
+  { "fixedSize", ArgBoolean, (void *) &appData.fixedSize, TRUE, (ArgIniType) FALSE },
 
   // [HGM] tournament options
   { "tourneyFile", ArgFilename, (void *) &appData.tourneyFile, FALSE, (ArgIniType) "" },
@@ -669,6 +683,8 @@ ArgDescriptor argDescriptors[] = {
   { "scoreWhite", ArgBoolean, (void *) &appData.scoreWhite, TRUE, FALSE },
   { "evalZoom", ArgInt, (void *) &appData.zoom, TRUE, (ArgIniType) 1 },
   { "evalThreshold", ArgInt, (void *) &appData.evalThreshold, TRUE, (ArgIniType) 25 },
+  { "firstPseudo", ArgTrue, (void *) &appData.pseudo[0], FALSE, FALSE },
+  { "secondPseudo", ArgTrue, (void *) &appData.pseudo[1], FALSE, FALSE },
   { "fSAN", ArgTrue, (void *) &appData.pvSAN[0], FALSE, FALSE },
   { "sSAN", ArgTrue, (void *) &appData.pvSAN[1], FALSE, FALSE },
   { "pairingEngine", ArgFilename, (void *) &appData.pairingEngine, TRUE, "" },
@@ -687,6 +703,9 @@ ArgDescriptor argDescriptors[] = {
   { "topLevel", ArgBoolean, (void *) &appData.topLevel, XBOARD, (ArgIniType) TOPLEVEL },
   { "dialogColor", ArgString, (void *) &appData.dialogColor, XBOARD, (ArgIniType) "" },
   { "buttonColor", ArgString, (void *) &appData.buttonColor, XBOARD, (ArgIniType) "" },
+  { "firstDrawDepth", ArgInt, (void *) &appData.drawDepth[0], FALSE, (ArgIniType) 0 },
+  { "secondDrawDepth", ArgInt, (void *) &appData.drawDepth[1], FALSE, (ArgIniType) 0 },
+  { "memoHeaders", ArgBoolean, (void *) &appData.headers, TRUE, (ArgIniType) FALSE },
 
 #if ZIPPY
   { "zippyTalk", ArgBoolean, (void *) &appData.zippyTalk, FALSE, (ArgIniType) ZIPPY_TALK },
@@ -757,6 +776,7 @@ ArgDescriptor argDescriptors[] = {
   { "winHeight", ArgInt, (void *) &wpMain.height, TRUE, INVALID }, //       for attaching auxiliary windows to them
   { "x", ArgInt, (void *) &wpMain.x, TRUE, (ArgIniType) CW_USEDEFAULT },
   { "y", ArgInt, (void *) &wpMain.y, TRUE, (ArgIniType) CW_USEDEFAULT },
+  { "icsUp", ArgBoolean, (void *) &wpConsole.visible, XBOARD, (ArgIniType) FALSE },
   { "icsX", ArgX,   (void *) &wpConsole.x, TRUE, (ArgIniType) CW_USEDEFAULT },
   { "icsY", ArgY,   (void *) &wpConsole.y, TRUE, (ArgIniType) CW_USEDEFAULT },
   { "icsW", ArgInt, (void *) &wpConsole.width, TRUE, (ArgIniType) CW_USEDEFAULT },
@@ -822,6 +842,30 @@ ExitArgError(char *msg, char *badArg, Boolean quit)
   exit(2);
 }
 
+void
+AppendToSettingsFile (char *line)
+{
+  char buf[MSG_SIZ];
+  FILE *f;
+  int c;
+  if(f = fopen(SETTINGS_FILE, "r")) {
+    do {
+      int i = 0;
+      while((buf[i] = c = fgetc(f)) != '\n' && c != EOF) if(i < MSG_SIZ-1) i++;
+      buf[i] = NULLCHAR;
+      if(!strcmp(line, buf)) return; // line occurs
+    } while(c != EOF);
+    // line did not occur; add it
+    fclose(f);
+    if(f = fopen(SETTINGS_FILE, "a")) {
+      TimeMark now;
+      GetTimeMark(&now);
+      fprintf(f, "-date %10lu\n%s\n", now.sec, line);
+      fclose(f);
+    }
+  }
+}
+
 int
 ValidateInt(char *s)
 {
@@ -873,6 +917,19 @@ ParseSettingsFile(char *name, char **addr)
     }
   if (ok) {
     f = fopen(fullname, "r");
+#ifdef DATADIR
+    if(f == NULL && *fullname != '/' && !addr) {         // when a relative name did not work
+	char buf[MSG_SIZ];
+	snprintf(buf, MSG_SIZ, "~/.xboard/themes/conf/%s", name);
+	MySearchPath(installDir, buf, fullname); // first look in user's own files
+	f = fopen(fullname, "r");
+	if(f == NULL) {
+	    snprintf(buf, MSG_SIZ, "%s/themes/conf", DATADIR);
+	    MySearchPath(buf, name, fullname); // also look in standard place
+	    f = fopen(fullname, "r");
+	}
+    }
+#endif
     if (f != NULL) {
       if (addr != NULL) {
 	    ASSIGN(*addr, fullname);
@@ -907,7 +964,7 @@ ParseArgs(GetFunc get, void *cl)
       ch = get(cl);
       while (ch != '\n' && ch != NULLCHAR) ch = get(cl);
       continue;
-    } else if (ch == '/' || ch == '-') {
+    } else if (ch == SLASH || ch == '-') {
       /* Switch */
       q = argName;
       while (ch != ' ' && ch != '=' && ch != ':' && ch != NULLCHAR &&
@@ -1065,13 +1122,13 @@ ParseArgs(GetFunc get, void *cl)
     if(posflag) { // positional argument: the argName was implied, and per default set as -lgf
       int len = strlen(argValue) - 4; // start of filename extension
       if(len < 0) len = 0;
-      if(!strcasecmp(argValue + len, ".trn")) {
+      if(!StrCaseCmp(argValue + len, ".trn")) {
         ad = &argDescriptors[2]; // correct implied type to -tf
         appData.tourney = TRUE; // let it parse -tourneyOptions later
-      } else if(!strcasecmp(argValue + len, ".fen") || !strcasecmp(argValue + len, ".epd")) {
+      } else if(!StrCaseCmp(argValue + len, ".fen") || !StrCaseCmp(argValue + len, ".epd")) {
         ad = &argDescriptors[1]; // correct implied type to -lpf
         appData.viewer = TRUE;
-      } else if(!strcasecmp(argValue + len, ".ini") || !strcasecmp(argValue + len, ".xop")) {
+      } else if(!StrCaseCmp(argValue + len, ".ini") || !StrCaseCmp(argValue + len, ".xop")) {
         ad = &argDescriptors[0]; // correct implied type to -opt
       } else if(GetEngineLine(argValue, 11)) {
         ad = &argDescriptors[3]; // correct implied type to -is
@@ -1105,6 +1162,12 @@ ParseArgs(GetFunc get, void *cl)
 
     case ArgString:
     case ArgFilename:
+      if(argValue[0] == '~' && argValue[1] == '~') {
+        char buf[4*MSG_SIZ]; // expand ~~
+        snprintf(buf, 4*MSG_SIZ, "%s%s", DATADIR, argValue+2);
+        ASSIGN(*(char **) ad->argLoc, buf);
+        break;
+      }
       ASSIGN(*(char **) ad->argLoc, argValue);
       break;
 
@@ -1158,6 +1221,20 @@ ParseArgs(GetFunc get, void *cl)
 
     case ArgCommSettings:
       ParseCommPortSettings(argValue);
+      break;
+
+    case ArgMaster:
+      AppendToSettingsFile(argValue);
+      break;
+
+    case ArgInstall:
+      q = *(char **) ad->argLoc;
+      if((saveDate == 0 || saveDate - dateStamp < 0) && !strstr(q, argValue) ) {
+        int l = strlen(q) + strlen(argValue);
+        *(char **) ad->argLoc = malloc(l+2);
+        snprintf(*(char **) ad->argLoc, l+2, "%s%s\n", q, argValue);
+        free(q);
+      }
       break;
 
     case ArgNone:
@@ -1328,6 +1405,8 @@ InitAppData(char *lpCmdLine)
      appData.NrRanks > BOARD_RANKS   )
       DisplayFatalError("Recompile with BOARD_RANKS or BOARD_FILES, to support this size", 0, 2);
 
+  if(!*appData.secondChessProgram) { ASSIGN(appData.secondChessProgram, appData.firstChessProgram); } // [HGM] scp defaults to fcp
+
   /* [HGM] After parsing the options from the .ini file, and overruling them
    * with options from the command line, we now make an even higher priority
    * overrule by WB options attached to the engine command line. This so that
@@ -1395,6 +1474,11 @@ InitAppData(char *lpCmdLine)
     appData.savePositionFile = strdup(buf);
   }
 
+  if(autoClose) { // was called for updating settingsfile only
+    if(saveSettingsOnExit) SaveSettings(settingsFileName);
+    exit(0);
+  }
+
   /* Finish initialization for fonts and sounds */
   CreateFonts();
 
@@ -1425,8 +1509,11 @@ SaveSettings(char* name)
   ArgDescriptor *ad;
   char dir[MSG_SIZ], buf[MSG_SIZ];
   int mps = appData.movesPerSession;
+  TimeMark now;
 
-  if (!MainWindowUp()) return;
+  if (!MainWindowUp() && !autoClose) return;
+
+  GetTimeMark(&now); saveDate = now.sec;
 
   GetCurrentDirectory(MSG_SIZ, dir);
   if(MySearchPath(installDir, name, buf)) {
@@ -1526,10 +1613,17 @@ SaveSettings(char* name)
       break;
     case ArgFilename:
       if(*(char**)ad->argLoc == NULL) break; // just in case
-      if (strchr(*(char **)ad->argLoc, '\"')) {
-	fprintf(f, OPTCHAR "%s" SEPCHAR "'%s'\n", ad->argName, *(char **)ad->argLoc);
-      } else {
-	fprintf(f, OPTCHAR "%s" SEPCHAR "\"%s\"\n", ad->argName, *(char **)ad->argLoc);
+      { char buf[MSG_SIZ];
+        snprintf(buf, MSG_SIZ, "%s", *(char**)ad->argLoc);
+#ifdef OSXAPP
+        if(strstr(buf, DATADIR) == buf)
+          snprintf(buf, MSG_SIZ, "~~%s", *(char**)ad->argLoc + strlen(DATADIR));
+#endif
+        if (strchr(buf, '\"')) {
+          fprintf(f, OPTCHAR "%s" SEPCHAR "'%s'\n", ad->argName, buf);
+        } else {
+          fprintf(f, OPTCHAR "%s" SEPCHAR "\"%s\"\n", ad->argName, buf);
+        }
       }
       break;
     case ArgBoardSize:
@@ -1544,6 +1638,8 @@ SaveSettings(char* name)
     case ArgNone:
     case ArgBackupSettingsFile:
     case ArgSettingsFilename: ;
+    case ArgMaster: ;
+    case ArgInstall: ;
     }
   }
   fclose(f);

@@ -1,3 +1,160 @@
+** Version 4.8.0 **
+
+   (see http://www.gnu.org/software/xboard/whats_new/4.8.0/ )
+
+   * New features in this release
+    * Resuming saved unfinished games
+    * Setting up positions more easily
+    * Bitbase adjudication
+    * Showing tablebase hits
+    * A new ICS window
+    * Recalling board themes (XBoard)
+    * Playing moves by clicking them
+    * Fonts in the XBoard GTK build
+    * Using the mousewheel (XBoard)
+    * Displaying a blunder graph
+    * Slicing up a PGN database
+    * Auto-install of engines
+
+   * New variant support
+    * ASEAN Chess
+    * Chu Shogi
+    * Mighty Lion
+    * Highlighting squares on engine command
+    * Let the engine finish a user move
+    * Non-standard variant names
+    * Fischer castling in any variant
+    * Knowing the moves of unknown pieces
+
+   * Fixed bugs
+    * Fix crash on using some Browse buttons in dialogs of the GTK
+      build.
+    * Fix buffer overflow in PGN parser, when all lines end in
+      comments.
+    * Fix crash on specifying non-existent board texture.
+    * Prevent crash on double-click in XB Game List Tags dialog.
+    * Fix the auto-display comment control in the General Options
+      dialog of WinBoard, which was ignored.
+    * Fix adjusting clocks by clicking them in Xaw build.
+    * Fix zooming of Evaluation Graph XB with mousewheel, which was
+      not working at all.
+    * Fix sticky-windows feature WB for Windows 8, where it did not
+      work at all.
+    * WinBoard's seek graph is now sized to also cover any board rim.
+    * Key bindings XB for non menu items are no longer ignored.
+    * Set castling rights correctly after loading of game file from
+      command line.
+    * Allow castling and e.p. moves to be edited into opening book
+      (and prevent their disappearance from it).
+    * The sorting of engine output was made more robust against
+      engines that send thinking output on fail lows.
+    * Fix node-count display, which was clipped to 32 bits.
+    * Suppress board-size oscillations in GTK build.
+    * Fixed detection of screen size in GTK.  (This is a mixed
+      blessing, as now it picks the largest possible window size, and
+      in GTK interactive down-sizing is not possible.)
+    * Fix mode highlighting after refusal of Two Machines mode because
+      2nd engine did not support variant.
+    * Blow up textures that are too small.
+    * Ignore invalid color specs in stead of treating them as black
+      (important because Cairo does not understand old xpm color
+      names).
+    * Prevent XB and WB from becoming unresponsive during lengthy
+      tasks such as book building.
+    * Fix slowdown of WB during loading of huge PGN files due to
+      Game-List window update.
+    * Limit width of menu bar for small board sizes in GTK build.
+    * Improve the code to kill rogue engines in XB.
+    * Drawing of pieces outside the board (in maximaized windows),
+      which left lots of debris, is now suppressed.
+    * Make WB window sizing handle multiple screens.
+    * 50-move counter is no longer reset on Chess960 castlings.
+    * Fix legality testing of A-side castling in FRC (which was
+      allowed with Rook on a- and blocker on b-file).
+    * Fixed piece ID of Falcon in Falcon Chess, which was written as
+      '.' and could not be selected on promotion.
+    * Fix cross-edge e.p. captures in Cylinder Chess (which was not
+      recognized as e.p.).
+    * Fix animation of Seirawan Chess castling + gating at Rook
+      square, which made Rook disappear.
+    * Fix adjudication of stalemates in variant Giveaway.
+    * Display of the variant tag in the Game List now works.
+    * Reset move entry (clearing target-square markers) on 'clear
+      board' in Edit Position mode.
+    * The Game List is automatically updated when you alter the tag
+      selection for the game lines.
+    * Indicate current variant in New Variant dialog of the GTK build
+      (by printing it in boldface on the button).
+
+
+** Version 4.7.3 **
+
+   (see http://www.gnu.org/software/xboard/whats_new/4.7.3/ )
+
+   bugfix release for 4.7.2
+
+   * Fix buffer overflow in parser on long PGN with scores
+   * Allow castling and e.p. capture moves to survive when editing opening book
+   * Fix node-count overflow in engine output
+   * Better sorting of fail-low lines in engine output
+   * Fix Chess960 a-side castling legality check
+   * Fix position search in Chess960
+   * Fix adjudication of Giveaway stalemates
+   * Adapt WinBoard window positioning to work with multiple screens
+   * Cure some weirdness in XBoard when dragging pieces outside the board
+   * Some dialog layout improvements to facilitate internationalization
+   * Fix crash on using some dialog Browse buttons in GTK version
+   * Connect manual menu item work in GTK version
+   * Put code for OS X integration in the GTK version
+
+** Version 4.7.2 **
+
+   (see http://www.gnu.org/software/xboard/whats_new/4.7.2/ )
+
+   bugfix release for 4.7.1
+
+   * Make PGN parser immune to unprotected time stamps
+   * Fix book creation
+   * Fix GUI book after setup position
+   * Allow drops / promotions/ deferrals to be edited into book
+   * Allow entry of negative numbers in spin control (WB)
+   * Fix grabbing of selected piece
+   * Fix initial board sizing WB
+   * Fix -zippyVariants option
+
+
+** Version 4.7.1 **
+
+   (see http://www.gnu.org/software/xboard/whats_new/4.7.1/ )
+
+   bugfix release for 4.7.0
+
+   * updated translations
+   * fixed texinfo 5.0 problems
+   * Work-around for Xt selection bug
+   * Add -backupSettingsFile option
+   * Make skipping of unknown option smarter
+   * Let popping up of WinBoard chatbox for channel open it
+   * Fix vertical sizing of GTK board
+   * Fix buffer overflow in feature parsing
+   * Accept setup command for non-standard board size
+   * Fix fatal error on unsupported board size
+   * Fix GTK box popup
+   * Let XBoard -autoBox option also affect move type-in
+   * Fix spurious popup after batch-mode Analyze Game
+   * Fix saving of analyzed game
+   * Provide compatibility with Alien Edition setup command
+   * Fix quoting of book name in tourney file
+   * Fix disappearence of pieces that were moved illegally
+   * Fix horrible bug in reading scores from PGN
+   * Print score of final position in Analyze Game
+   * Fix GTK SetInsertPos
+   * Fix scrolling of Chat Box
+   * Make Chat Box window obey -topLevel option
+   * Fix Xaw file browser
+   * Update zippy.README
+
+
 ** Version 4.7.0 **
 
    (see http://www.gnu.org/software/xboard/whats_new/4.7.0/ )

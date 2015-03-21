@@ -1,7 +1,7 @@
 /*
  * New (WinBoard-style) Move history for XBoard
  *
- * Copyright 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Copyright 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  * ------------------------------------------------------------------------
  *
  * GNU XBoard is free software: you can redistribute it and/or modify
@@ -79,7 +79,7 @@ SelectMove (Option *opt, int n, int x, int y, char *text, int index)
 }
 
 Option historyOptions[] = {
-{ 200, T_VSCRL | T_FILL | T_WRAP | T_TOP, 400, NULL, (void*) &historyText, NULL, (char**) &SelectMove, TextBox, "" },
+{ 200, T_VSCRL | T_FILL | T_WRAP | T_TOP, 400, NULL, (void*) &historyText, NULL , (char**) &SelectMove, TextBox, "", &appData.historyFont },
 {   0,           NO_OK,             0, NULL, (void*) NULL, "", NULL, EndMark , "" }
 };
 

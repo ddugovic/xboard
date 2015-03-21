@@ -335,9 +335,14 @@ FEN (Forsythe-Edwards notation) format unless the @code{oldSaveStyle}
 option is true, in which case they are saved in an older,
 human-readable format that is specific to XBoard. Both formats
 can be read back by the @samp{Load Position} command.
+@item Save Selected Games
+@cindex Save Selected Games
+Will cause all games selected for display in the current Game List
+to be appended to a file of the user's choice.
 @item Save Games as Book
 @cindex Save Games as Book, Menu Item
-Creates an opening book from the currently loaded game file.
+Creates an opening book from the currently loaded game file,
+incorporating only the games currently selected in the Game List.
 The book will be saved on the file specified in the @samp{Common Engine}
 options dialog.
 The value of @samp{Book Depth} specified in that same dialog will 
@@ -346,7 +351,7 @@ the internal book buffer.
 This command can take a long time to process,
 and the size of the buffer is currently limited.
 At the end the buffer will be saved as a Polyglot book,
-but the buffer will ot be cleared,
+but the buffer will not be cleared,
 so that you can continue adding games from other game files.
 @item Mail Move
 @itemx Reload CMail Message
@@ -1759,44 +1764,29 @@ Not available if the last position was loaded from a pipe.
 Currently no keystroke is assigned to this ReloadPositionProc.
 @end table
 
-You can add or remove shortcut keys using the X resources
-@code{form.translations}. Here is an example of what would go in your
-@file{.Xresources} file:
+In the Xaw build of XBoard you can add or remove shortcut keys
+using the X resources @code{paneA.translations}.
+Here is an example of what could go into your
+@file{.Xdefaults} file:
 
 @example
-XBoard*form.translations: \
-  Shift<Key>?: AboutGameProc() \n\
-  <Key>y: AcceptProc() \n\
-  <Key>n: DeclineProc() \n\
-  <Key>i: NothingProc()
+XBoard*paneA.translations: \
+  Shift<Key>?: MenuItem(Help.About) \n\
+  Ctrl<Key>y: MenuItem(Action.Accept) \n\
+  Ctrl<Key>n: MenuItem(Action.Decline) \n\
+  Ctrl<Key>i: MenuItem(Nothing)
 @end example
 @noindent
-Binding a key to @code{NothingProc} makes it do nothing, thus removing
-it as a shortcut key. The XBoard commands that can be bound to keys
+So the key should always be bound to the action 'MenuItem',
+with the (hierarchical) name of the menu item as argument.
+There are a few actions available for which no menu item exists:
+Binding a key to @code{Nothing} makes it do nothing, thus removing
+it as a shortcut key. Other such functions that can be bound to keys
 are:
 
 @example
-AbortProc, AboutGameProc, AboutProc, AcceptProc, AdjournProc,
-AlwaysQueenProc, AnalysisModeProc, AnalyzeFileProc,
-AnimateDraggingProc, AnimateMovingProc, AutobsProc, AutoflagProc,
-AutoflipProc, AutoraiseProc, AutosaveProc, BackwardProc,
-BlindfoldProc, BookProc, CallFlagProc, CopyGameProc, CopyPositionProc,
-DebugProc, DeclineProc, DrawProc, EditCommentProc, EditGameProc,
-EditPositionProc, EditTagsProc, EnterKeyProc, FlashMovesProc,
-FlipViewProc, ForwardProc, GetMoveListProc, HighlightLastMoveProc,
-HintProc, IcsAlarmProc, IcsClientProc, IcsInputBoxProc,
-InfoProc, LoadGameProc, LoadNextGameProc, LoadNextPositionProc,
-LoadPositionProc, LoadPrevGameProc, LoadPrevPositionProc,
-LoadSelectedProc, MachineBlackProc, MachineWhiteProc, MailMoveProc,
-ManProc, MoveNowProc, MoveSoundProc, NothingProc, OldSaveStyleProc,
-PasteGameProc, PastePositionProc, PauseProc, PeriodicUpdatesProc,
-PonderNextMoveProc, PopupExitMessageProc, PopupMoveErrorsProc,
-PremoveProc, QuietPlayProc, QuitProc, ReloadCmailMsgProc,
-ReloadGameProc, ReloadPositionProc, RematchProc, ResetProc,
-ResignProc, RetractMoveProc, RevertProc, SaveGameProc,
-SavePositionProc, ShowCoordsProc, ShowGameListProc, ShowThinkingProc,
-StopExaminingProc, StopObservingProc, TestLegalityProc, ToEndProc,
-ToStartProc, TrainingProc, TruncateGameProc, and TwoMachinesProc.
+AboutGame, DebugProc (switches the -debug option on or off),
+LoadNextGame, LoadPrevGame, ReloadGame, ReloadPosition.
 @end example
 
 @node Options
@@ -2916,6 +2906,17 @@ the last one is discarded.
 Changes in the list will only become visible the next session,
 provided you saved the settings.
 Default: 6.
+@item -autoInstall list
+@cindex autoInstall, option
+When the list is set to a non-empty string, XBoard will scan the
+operating system's plugin directory for engines supporting UCI
+and XBoard protocol at startup.
+When it finds an engine that was installed after it last saved
+its settings, a line to launch that engine (as per specs in
+the plugin file) is appended to the -firstChessProgramNames
+list of installed engines.
+In the future it will be possible to use the list to limit
+this automatic adding of engines to a certain types of variants.
 @item -oneClickMove true/false
 @cindex oneClickMove, option
 When set, this option allows you to enter moves by only clicking the to-
@@ -3112,7 +3113,8 @@ Default: true.
 The font used for the clocks. If the option value is a pattern
 that does not specify the font size, XBoard tries to choose an
 appropriate font for the board size being used.
-Default: -*-helvetica-bold-r-normal--*-*-*-*-*-*-*-*.
+Default Xaw: -*-helvetica-bold-r-normal--*-*-*-*-*-*-*-*.
+Default GTK: Sans Bold %d.
 @item -coordFont font
 @cindex coordFont, option
 @cindex Font, coordinates
@@ -3120,15 +3122,56 @@ The font used for rank and file coordinate labels if @code{showCoords}
 is true. If the option value is a pattern that does not specify
 the font size, XBoard tries to choose an appropriate font for
 the board size being used.
-Default: -*-helvetica-bold-r-normal--*-*-*-*-*-*-*-*.
+Default Xaw: -*-helvetica-bold-r-normal--*-*-*-*-*-*-*-*.
+Default GTK: Sans Bold %d.
 @item -messageFont font
 @cindex messageFont, option
 @cindex Font, message
-The font used for popup dialogs, menus, comments, etc.
+The font used for popup dialogs, menus, etc.
 If the option value is a pattern that does not specify
 the font size, XBoard tries to choose an appropriate font for
 the board size being used.
-Default: -*-helvetica-medium-r-normal--*-*-*-*-*-*-*-*.
+Default Xaw: -*-helvetica-medium-r-normal--*-*-*-*-*-*-*-*.
+Default GTK: Sans Bold %d.
+@cindex tagsFont, option
+@cindex Font, tags
+The font used in the Edit Tags dialog.
+If the option value contains %d, XBoard will replace it by
+an appropriate font for the board size being used.
+(Only used in GTK build.)
+Default: Sans Normal %d.
+@cindex commentFont, option
+@cindex Font, comment
+The font used in the Edit Comment dialog.
+If the option value contains %d, XBoard will replace it by
+an appropriate font for the board size being used.
+(Only used in GTK build.)
+Default: Sans Normal %d.
+@cindex icsFont, option
+@cindex Font, ics
+The font used to display ICS output in the ICS  Chat window.
+As ICS output often contains tables aligned by spaces,
+a mono-space font is recommended here.
+If the option value contains %d, XBoard will replace it by
+an appropriate font for the board size being used.
+(Only used in GTK build.)
+Default: Monospace Normal %d.
+@cindex moveHistoryFont, option
+@cindex Font, moveHistory
+The font used in Move History and Engine Output windows.
+As these windows display mainly moves,
+one could use a figurine font here.
+If the option value contains %d, XBoard will replace it by
+an appropriate font for the board size being used.
+(Only used in GTK build.)
+Default: Sans Normal %d.
+@cindex gameListFont, option
+@cindex Font, gameList
+The font used in the listbox of the Game List window.
+If the option value contains %d, XBoard will replace it by
+an appropriate font for the board size being used.
+(Only used in GTK build.)
+Default: Sans Bold %d.
 @item -fontSizeTolerance tol
 @cindex fontSizeTolerance, option
 In the font selection algorithm, a nonscalable font will be preferred
@@ -3216,6 +3259,16 @@ and if they should be used rather than using simple colors.
 The algorithm for cutting squares out of a given bitmap is such that
 the picture is perfectly reproduced when a bitmap the size of
 the complete board is given.
+If the filename ends in "-NxM.png", with integer N and M,
+it is assumed to contain a bitmap of a complete board of N files
+and M ranks, and XBoard will scale it to exactly match the
+current square size.
+If N=M=0 it scales the entire bitmap to the size of the board,
+irrespective of the number of files and ranks of the latter.
+Without any -NxM suffix textures are only blown up by an integer
+factor when they are smaller than the square size, or,
+when the name starts with "xq", too small to cover the
+complete Xiangqi board.
 Default: false and ""
 @item -drag/-xdrag or -animateDragging true/false
 @cindex drag, option
@@ -3289,6 +3342,14 @@ Default: False.
 When true, scores will always be printed from the white point-of-view, 
 rather than the side-to-move point-of-view.
 Default: False.
+@item -memoHeaders true|false
+@cindex memoHeaders, option
+When true, column headers will be displayed in the Engine Output window
+for the depth, score, time and nodes data.
+Right-clicking on these headers will hide or show the corresponding data.
+(Not intended for dynamic use, as already printed data of the current search
+will not be affected!)
+Defaul: False.
 @end table
 
 @node Adjudication Options
@@ -3429,6 +3490,7 @@ cylinder      Pieces wrap around the board edge
 knightmate    King moves as Knight, and vice versa 
 super         Superchess (shuffle variant with 4 exo-pieces)
 makruk        Thai Chess (shatranj-like, P promotes on 6th rank)
+asean         ASEAN Chess (a modernized version of Makruk)
 spartan       Spartan Chess (black has unorthodox pieces)
 fairy         A catchall variant in which all piece types 
               known to XBoard can participate (8x8)
@@ -3562,7 +3624,14 @@ Default is the login name on your local computer.
 @itemx -delayAfterQuit number
 @cindex delayBeforeQuit, option
 @cindex delayAfterQuit, option
-These options specify how long XBoard has to wait before sending a termination signal to rogue engine processes, that do not want to react to the 'quit' command. The second one determines the pause after killing the engine, to make sure it dies.
+These options order pauses before and after sending the "quit" command to an engine that must be terminated.
+The pause between quit and the previous command is specified in milliseconds.
+The pause after quit is used to schedule a kill signal to be sent to the engine process after the
+number of specified seconds plus one.
+This signal is a different one as the terminiation signal described in the protocol specs
+which engines can suppress or ignore, and which is sent directly after the "quit" command.
+Setting @code{delayAfterQuit} to -1 will suppress sending of the kill signal.
+Default: 0
 @item -searchMode n
 @cindex searchMode, option
 The integer n encodes the mode for the @samp{find position} function.
@@ -4146,7 +4215,6 @@ Here are some other programs you can use with XBoard
 * Fairy-Max::        The Fairy-Max chess engine.
 * HoiChess::         The HoiChess chess engine.
 * Crafty::           The Crafty chess engine.
-* zic2xpm::          The program used to import chess sets from ZIICS.
 @end menu
 
 @node GNU Chess
@@ -4202,45 +4270,6 @@ ftp://ftp.cis.uab.edu/hyatt/.
 To use Crafty with XBoard, give the -fcp and -fd options as follows, where
 <crafty's directory> is the directory in which you installed Crafty
 and placed its book and other support files.
-
-@node zic2xpm
-@section zic2xpm
-
-The ``zic2xpm'' program is used to import chess sets from the ZIICS(*)
-program into XBoard. ``zic2xpm'' is part of the XBoard distribution.
-ZIICS is available from:
-
-ftp://ftp.freechess.org/pub/chess/DOS/ziics131.exe
-
-To import ZIICS pieces, do this:
-@table @asis
-@item 1. Unzip ziics131.exe into a directory:
-
-@example
-unzip -L ziics131.exe -d ~/ziics
-@end example
-@item 2. Use zic2xpm to convert a set of pieces to XBoard format.
-
-For example, let's say you want to use the
-FRITZ4 set. These files are named ``fritz4.*'' in the ZIICS distribution.
-
-@example
-mkdir ~/fritz4
-cd ~/fritz4
-zic2xpm ~/ziics/fritz4.*
-@end example
-@item 3. Give XBoard the ``-pixmap'' option when starting up, e.g.:
-
-@example
-xboard -pixmap ~/fritz4
-@end example
-@end table
-
-(*) ZIICS is a separate copyrighted work of Andy McFarland.
-The ``ZIICS pieces'' are copyrighted works of their respective
-creators. Files produced by ``zic2xpm'' are for PERSONAL USE ONLY
-and may NOT be redistributed without explicit permission from
-the original creator(s) of the pieces.
 
 @ifnottex
 @node Copyright

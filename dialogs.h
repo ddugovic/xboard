@@ -1,7 +1,7 @@
 /*
  * dialogs.h -- shared variables for generic dialog popup of XBoard
  *
- * Copyright 2000, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * Copyright 2000, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  * ------------------------------------------------------------------------
  *
  * GNU XBoard is free software: you can redistribute it and/or modify
@@ -32,10 +32,11 @@
 // int     max        X/E   (w)   (w)    (w)   (w)   (w)  (w)  (w)   (w)
 // void*   handle     X/E   X/E   X/E    X/E   X/E    X    X    X     X    X
 // void*   target      X     X     X     X/C    C          X    X     C    C
-// char*   textValue               E     X/E    *
-// char ** choice                        X/E    *                          X
+// char*   textValue              X/E    X/E    *
+// char ** choice                  C     X/E    *                          X
 // enum    type       X/E   X/E   X/E    X/E    X     X    X    X     X    X     X    X
-// char[]  name       X/E   X/E   X/E    X/E    X          X    X     X    X
+// char *  name       X/E   X/E   X/E    X/E    X          X    X     X    X
+// char ** font                    X            X          X    X                       (GTK only)
 // File and Path options are like String (but get a browse button added in the dialog), and Slider
 // is like Spin. Menu can be PopUp or PopDown; both need the COMBO_CALLBACK bit (3) set!
 // (h) or (w) means the field optionally (when non-null) specifies the height or width of the main
@@ -107,6 +108,7 @@ AskDlg,         // this and beyond do grab mouse events (and are destroyed)
 FatalDlg,
 BoardWindow,
 BrowserDlg,
+MasterDlg,
 NrOfDialogs     // dummy for total
 } DialogClass;
 
@@ -125,23 +127,27 @@ extern int dialogError;
 extern ButtonCallback *comboCallback;
 extern void *userLogo;
 
-extern WindowPlacement wpComment, wpTags, wpMoveHistory, wpMain, wpDualBoard;
+extern WindowPlacement wpComment, wpTags, wpMoveHistory, wpMain, wpDualBoard, wpConsole;
 extern char *marked[];
 extern Boolean shellUp[];
 extern Option textOptions[], typeOptions[], dualOptions[], mainOptions[];
 
 
+void GetPlacement P((DialogClass dlg, WindowPlacement *wp));
 int DialogExists P((DialogClass n));
 int GenericPopUp P((Option *option, char *title, DialogClass dlgNr, DialogClass parent, int modal, int topLevel));
 int GenericReadout P((Option *currentOption, int selected));
 int PopDown P((DialogClass n));
 void MarkMenu P((char *item, int dlgNr));
 int AppendText P((Option *opt, char *s));
+void AppendColorized P((Option *opt, char *s, int count));
+void Show P((Option *opt, int hide));
+int  IcsHist P((int dir, Option *opt, DialogClass dlg));
 void HighlightText P((Option *opt, int from, int to, Boolean highlight));
 void SetColor P((char *colorName, Option *box));
 //void ColorChanged P((Widget w, XtPointer data, XEvent *event, Boolean *b));
 void SetInsertPos P((Option *opt, int pos));
-void HardSetFocus P((Option *opt));
+void HardSetFocus P((Option *opt, DialogClass dlg));
 void CursorAtEnd P((Option *opt));
 void GetWidgetText  P((Option *opt, char **buf));
 void SetWidgetText  P((Option *opt, char *buf, int n));
@@ -184,6 +190,7 @@ void SlaveResize P((Option *opt));
 
 int  SetCurrentComboSelection P((Option *opt));
 void BoxAutoPopUp P((char *buf));
+void ConsoleAutoPopUp P((char *buf));
 void IcsKey P((int n));
 void ICSInputBoxPopUp P((void));
 void LoadOptionsPopUp P((DialogClass parent));

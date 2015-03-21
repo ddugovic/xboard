@@ -5,7 +5,7 @@
  * Massachusetts.
  *
  * Enhancements Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006,
- * 2007, 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+ * 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
  *
  * The following terms apply to Digital Equipment Corporation's copyright
  * interest in XBoard:
@@ -119,7 +119,7 @@ typedef struct {
 #define BORDER_X_OFFSET 3
 #define BORDER_Y_OFFSET 27
 #define FIRST_CHESS_PROGRAM	"fairymax"
-#define SECOND_CHESS_PROGRAM	"fairymax"
+#define SECOND_CHESS_PROGRAM	""
 #define FIRST_DIRECTORY         "."
 #define SECOND_DIRECTORY        "."
 #define SOUND_BELL              ""

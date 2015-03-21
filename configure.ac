@@ -1,7 +1,7 @@
 dnl| configure.in
 dnl|
 dnl| Copyright 1992-2001, 2002, 2003, 2004, 2005, 2006, 2007,
-dnl| 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
+dnl| 2008, 2009, 2010, 2011, 2012, 2013, 2014 Free Software Foundation, Inc.
 dnl|
 dnl| GNU XBoard is free software: you can redistribute it and/or modify
 dnl| it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@ dnl| to regenerate configure.  Then submit your changes to be folded into
 dnl| the standard version of xboard.
 
 dnl| define second argument as VERSION.PATCHLEVEL. e.g. 4.4.0j
-AC_INIT([xboard],[master-20130224],[bug-xboard@gnu.org])
+AC_INIT([xboard],[4.8.0],[bug-xboard@gnu.org])
 
 dnl| need this to be able to compile some files in a subdir (filebrowser)
 AM_INIT_AUTOMAKE([subdir-objects])
@@ -56,7 +56,6 @@ AH_TEMPLATE([USE_PTYS],[template])
 AH_TEMPLATE([X_WCHAR],[template])
 AH_TEMPLATE([ATTENTION],[template])
 AH_TEMPLATE([DEFINED_SYS_ERRLIST],[template])
-AH_TEMPLATE([HAVE_LIBXPM],[template])
 AH_TEMPLATE([USE_XAW3D],[template])
 AH_TEMPLATE([X_LOCALE],[template])
 
@@ -138,18 +137,90 @@ FRONTEND_LIBS=""
 
 AC_ARG_WITH([gtk],
             [AS_HELP_STRING([--with-gtk],[use GTK front-end (default)])],
-            [with_GTK=yes],
-            [with_GTK=no])
+            [with_GTK="$withval"],
+            [with_GTK="yes"])
 
 AC_ARG_WITH([Xaw3d],
             [AS_HELP_STRING([--with-Xaw3d],[use Xaw3d front-end (not fully supported anymore)])],
-            [with_Xaw3d=yes],
-            [with_Xaw3d=no])
+            [with_Xaw3d="$withval"],
+            [with_Xaw3d="no"])
 
 AC_ARG_WITH([Xaw],
             [AS_HELP_STRING([--with-Xaw],[use Xaw front-end])],
-            [with_Xaw=yes],
-            [with_Xaw=no])
+            [with_Xaw="$withval"],
+            [with_Xaw="no"])
+
+AC_ARG_WITH([iconsdir],
+            [AS_HELP_STRING([--with-iconsdir=DIR],
+            [path where icons get installed (default: $datadir/icons/hicolor/48x48/apps)])],
+            [ICONSDIR="$withval"],
+            [ICONSDIR='$(datadir)/icons/hicolor/48x48/apps'])
+
+AC_ARG_WITH([svgiconsdir],
+            [AS_HELP_STRING([--with-svgiconsdir=DIR],
+            [path where svg icons get installed (default: $datadir/icons/hicolor/scalable/apps)])],
+            [SVGICONSDIR="$withval"],
+            [SVGICONSDIR='$(datadir)/icons/hicolor/scalable/apps'])
+
+AC_ARG_WITH([desktopdir],
+            [AS_HELP_STRING([--with-desktopdir=DIR],
+                            [path where desktop files get installed (default: $datadir/applications)])],
+            [DESKTOPDIR="$withval"],
+            [DESKTOPDIR='$(datadir)/applications'])
+
+AC_ARG_WITH([mimedir],
+            [AS_HELP_STRING([--with-mimedir=DIR],
+                            [path where mime files get installed (default: $datadir/mime/packages)])],
+            [MIMEDIR="$withval"],
+            [MIMEDIR='$(datadir)/mime/packages'])
+
+AC_ARG_WITH([gamedatadir],
+            [AS_HELP_STRING([--with-gamedatadir=DIR],
+                            [path where game data files get installed (default: $datadir/games/xboard)])],
+            [GAMEDATADIR="$withval"],
+            [GAMEDATADIR='$(datadir)/games/xboard'])
+
+AC_ARG_ENABLE([update-mimedb],
+	      [AS_HELP_STRING([--disable-update-mimedb],[disable the update-mime-database after install [default=no]])],
+	      [enable_mimedb="no"],
+	      [enable_mimedb="yes"])
+
+AC_ARG_ENABLE([osxapp],
+	      [AS_HELP_STRING([--enable-osxapp],[build a OSX app [default=no]])],
+              [enable_OSXAPP=$enableval],
+              [enable_OSXAPP="no"])
+
+AS_IF([test x"$enable_OSXAPP" = x"yes"], [
+     prefix=`pwd`/XBoard.app/Contents
+     AC_DEFINE([OSXAPP], [1], [We are building an OSX APP, redefine some functions])
+     with_GTK="yes"
+     enable_mimedb="no"
+     datarootdir='$(prefix)/Resources'
+     datadir='$(datarootdir)/share'
+     sysconfdir='$(datarootdir)/etc'
+     infodir='$(datadir)/info'
+     mandir='$(datadir)/man'
+     bindir='$(prefix)/MacOS'
+     localedir='$(datadir)/locale'
+     GAMEDATADIR='$(datadir)/xboard'],[])
+
+AM_CONDITIONAL(OSX_APP, test x"$enable_OSXAPP" = x"yes")
+
+AM_CONDITIONAL(ENABLE_UPDATE_MIMEDB, test x"$enable_mimedb" = x"yes")
+if test x"$enable_mimedb" = x"yes"; then
+   AC_PATH_PROG([XDG_MIME],[xdg-mime])
+   AC_SUBST(XDG_MIME)
+   AC_PATH_PROG([XDG_DESKTOP_MENU],[xdg-desktop-menu])
+   AC_SUBST(XDG_DESKTOP_MENU)
+   AC_PATH_PROG([XDG_ICON_RESOURCE],[xdg-icon-resource])
+   AC_SUBST(XDG_ICON_RESOURCE)
+fi
+
+AC_SUBST(ICONSDIR)
+AC_SUBST(SVGICONSDIR)
+AC_SUBST(DESKTOPDIR)
+AC_SUBST(MIMEDIR)
+AC_SUBST(GAMEDATADIR)
 
 dnl | check for GTK+
 if test x"$with_Xaw" = x"no" -a x"$with_Xaw3d" = x"no" ; then
@@ -157,6 +228,7 @@ if test x"$with_Xaw" = x"no" -a x"$with_Xaw3d" = x"no" ; then
   PKG_CHECK_MODULES([GTK], [ gtk+-2.0 >= 2.18.0 gmodule-2.0 ])
   FRONTEND_CFLAGS=$GTK_CFLAGS
   FRONTEND_LIBS=$GTK_LIBS
+  with_Xaw="no"
 fi
 
 if test x"$with_Xaw" = x"yes" -o x"$with_Xaw3d" = x"yes" ; then
@@ -211,12 +283,7 @@ fi
 
 dnl | make results available in Makefile.am
 AM_CONDITIONAL([withGTK],   [test x"$with_GTK" = x"yes"])
-AM_CONDITIONAL([withXaw],   [test x"$with_Xaw3d" = x"yes"])
-AM_CONDITIONAL([withXaw],   [test x"$with_Xaw" = x"yes"])
-
-
-AC_SUBST(FRONTEND_CFLAGS)
-AC_SUBST(FRONTEND_LIBS)
+AM_CONDITIONAL([withXaw],   [test x"$with_Xaw3d" = x"yes" || test x"$with_Xaw" = x"yes"])
 
 dnl | end Front-end check
 
@@ -396,32 +463,27 @@ dnl| USE_PTYS=1
 
 dnl| add some libs for OS X
   *-apple-* )
+    AC_MSG_WARN([Apple support is experimental, please report any problems to bug-xboard@gnu.org])
+    AC_MSG_WARN([use --enable-osxapp to enable the build target and automatically adjust target directories])
+    AC_MSG_WARN([Building an OSX app currently relies on some programs such as dylib that we don't test for])
+    AC_MSG_WARN([patches welcome ;)])
+    AC_PATH_PROG(SW_VERS, sw_vers)
+    if test "x$SW_VERS" != "x"; then
+      AC_MSG_CHECKING(Mac OS X version)
+      MACOSX_VERSION=`$SW_VERS -productVersion`
+      AC_MSG_RESULT([$MACOSX_VERSION])
+    fi
+    FRONTEND_LIBS="$FRONTEND_LIBS -headerpad_max_install_names "
+    if test x"$enable_OSXAPP" = x"yes" ; then
+        FRONTEND_LIBS="$FRONTEND_LIBS -lgtkmacintegration"
+    fi
+    FRONTEND_CFLAGS="$FRONTEND_CFLAGS -I/opt/local/include -L/opt/local/lib"
   ;;
 esac
 
-AC_ARG_ENABLE(	[xpm],
-		[AS_HELP_STRING([--enable-xpm],[libXpm will be used if found (default)])],
-		[enable_xpm="$enableval"],
-		[enable_xpm="yes"])
 
-if test x"$enable_xpm" != "xno"; then
-  save_cflags="$CFLAGS"
-  save_cppflags="$CPPFLAGS"
-  CFLAGS="$CFLAGS $X_CFLAGS"
-  CPPFLAGS="$CPPFLAGS $X_CFLAGS"
-  AC_CHECK_HEADERS(X11/xpm.h)
-  CFLAGS="$save_cflags"
-  CPPFLAGS="$save_cppflags"
-  if test "$ac_cv_header_X11_xpm_h" = "yes"; then
-    save_ldflags="$LDFLAGS"
-    LDFLAGS="$LDFLAGS $X_LIBS"
-    AC_CHECK_LIB(Xpm, XpmReadFileToPixmap,
-                 [X_PRE_LIBS="-lXpm $X_PRE_LIBS"; AC_DEFINE(HAVE_LIBXPM)], [],
-                 [$X_PRE_LIBS -lX11 $X_EXTRA_LIBS])
-    LDFLAGS="$save_ldflags"
-  fi
-fi
-
+AC_SUBST(FRONTEND_CFLAGS)
+AC_SUBST(FRONTEND_LIBS)
 AC_SUBST(PRE_XMULIB)
 AC_SUBST(POST_XMULIB)
 AC_SUBST(CONF_CFLAGS)
@@ -456,7 +518,7 @@ AC_ARG_ENABLE( [zippy],
 	       [],
 	       [enable_zippy="no"])
 
-if test x"$enable_zippy" != xno; then
+if test x"$enable_zippy" != x"no"; then
   AC_DEFINE(ZIPPY, 1,[should zippy be enabled])
 else
   AC_DEFINE(ZIPPY, 0,[should zippy be enabled])
@@ -483,25 +545,19 @@ AC_SUBST(X_CFLAGS)
 AC_SUBST(X_LIBS)
 fi
 
-dnl | should we install desktop icons and mime associations?
-AC_ARG_ENABLE(	[update-mimedb],
-		[AS_HELP_STRING([--disable-update-mimedb],[disable the update-mime-database after install [default=no]])],
-		[enable_mimedb="no"],
-		[enable_mimedb="yes"])
+dnl create a string with configure options that can be passed to the
+dnl program, good for bug reports and version printout, see output below
+CONFIGURE_OPTIONS="prefix=$prefix; datarootdir=$datarootdir; \
+datadir=$datadir; gamedatadir=$GAMEDATADIR; desktopdir=$DESKTOPDIR; \
+mimedir=$MIMEDIR; iconsdir=$ICONSDIR; svgiconsdir=$SVGICONSDIR; infodir=$infodir; \
+sysconfigdir=$sysconfigdir; update_mimedb=$enable_mimedb; NLS=$USE_NLS; \
+GKT=$with_GTK; Xaw3d=$with_Xaw3d; Xaw=$with_Xaw; \
+ptys=$enable_ptys; zippy=$enable_zippy; sigint=$enable_sigint"
 
-AM_CONDITIONAL(ENABLE_UPDATE_MIMEDB, test x"$enable_mimedb" = "xyes")
-
-if test x"$enable_mimedb" = "xyes"; then
-   AC_PATH_PROG([XDG_MIME],[xdg-mime])
-   AC_SUBST(XDG_MIME)
-   AC_PATH_PROG([XDG_DESKTOP_MENU],[xdg-desktop-menu])
-   AC_SUBST(XDG_DESKTOP_MENU)
-   AC_PATH_PROG([XDG_ICON_RESOURCE],[xdg-icon-resource])
-   AC_SUBST(XDG_ICON_RESOURCE)
-fi
+AC_SUBST(CONFIGURE_OPTIONS)
 
 dnl |  output Makefile
-AC_CONFIG_FILES([Makefile cmail po/Makefile.in])
+AC_CONFIG_FILES([Makefile cmail po/Makefile.in osxapp/Info.plist])
 AC_CONFIG_COMMANDS([test-stamp-h],[test -z "$CONFIG_HEADERS" || date > stamp-h])
 AC_CONFIG_COMMANDS([chmod-cmail],[chmod 755 cmail])
 AC_OUTPUT
@@ -514,8 +570,12 @@ echo " Configurations summary:"
 echo ""
 echo "        prefix:          $prefix       "
 echo "        datarootdir:     $datarootdir  "
-echo "        datadir:         $datadir   (icons will go in \$datadir/icons/hicolor/...)"
-echo "                                    (bitmaps will go in \$datadir/games/xboard/...)"
+echo "        datadir:         $datadir      "
+echo "        gamedatadir:     $GAMEDATADIR  "
+echo "        desktopdir:      $DESKTOPDIR   "
+echo "        mimedir:         $MIMEDIR      "
+echo "        iconsdir:        $ICONSDIR     "
+echo "        svgiconsdir:     $SVGICONSDIR  "
 echo "        infodir:         $infodir   (info files will go here)"
 echo "        sysconfdir:      $sysconfdir   (xboard.conf will go here)"
 echo ""
@@ -527,7 +587,6 @@ echo "        GTK:             $with_GTK"
 echo "        Xaw3d:           $with_Xaw3d"
 echo "        Xaw:             $with_Xaw"
 echo ""
-echo "        xpm:             $enable_xpm"
 echo "        ptys:            $enable_ptys"
 echo "        zippy:           $enable_zippy"
 echo "        sigint:          $enable_sigint"

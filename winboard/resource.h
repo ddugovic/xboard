@@ -216,6 +216,7 @@
 #define IDC_NFG_Edit                    1023
 #define IDC_EpDrawMoveCount             1023
 #define IDC_PolyglotDir                 1023
+#define OPT_TagsSave                    1023
 #define OPT_ConsoleText                 1024
 #define OPT_LightSquareColor            1024
 #define OPT_CommandInput                1025
@@ -342,7 +343,7 @@
 #define OPT_AutoCreate                  1352
 #define OPT_AutoFlag                    1353
 #define OPT_AlwaysQueen                 1354
-#define OPT_AutoComment                 1354
+#define OPT_AutoComment                 1458
 #define OPT_AnimateDragging             1355
 #define OPT_AutoObserve                 1355
 #define OPT_AnimateMoving               1356
@@ -442,6 +443,10 @@
 #define OPT_ExtraInfoInMoveHistory      1437
 #define OPT_HighlightMoveArrow          1438
 #define OPT_AutoLogo			1439
+#define OPT_AutoTags                    1440
+#define OPT_Headers                     1441
+#define OPT_Variations                  1442
+#define OPT_AutoExtend                  1443
 #define IDC_BUTTON1                     1440
 #define IDC_BrowseForPolyglotDir        1440
 #define IDC_BrowseForEGTB               1441
@@ -504,7 +509,10 @@
 #define OPT_VariantMakruk               1529
 #define OPT_VariantSChess               1530
 #define OPT_VariantSpartan              1531
+#define OPT_VariantASEAN                1532
 #define OPT_VariantGrand                1534
+#define OPT_VariantLion                 1535
+#define OPT_EngineVariant               1560
 #define IDC_Files                       1550
 #define IDC_Ranks                       1551
 #define IDC_Holdings                    1552
@@ -631,6 +639,9 @@
 #define OPT_GameListFind                1981
 #define OPT_Grid                        1983
 #define IDM_LoadProg2                   1984
+#define OPT_Counts                      1985
+#define OPT_Ranget                      1986
+#define IDM_SaveSelected                1987
 
 
 // Next default values for new objects
